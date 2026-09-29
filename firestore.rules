@@ -1,0 +1,94 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isAdmin() {
+      return signedIn() && (request.auth.token.email == 'sebas@teamsavage.app'
+        || exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+    }
+    function memberDoc(id) { return get(/databases/$(database)/documents/members/$(id)); }
+    function isOwner(id) { return signedIn() && exists(/databases/$(database)/documents/members/$(id)) && memberDoc(id).data.uid == request.auth.uid; }
+    // Correo interno del socio: <id>-<versión>@teamsavage.app
+    function loginEmailOk(id) {
+      return signedIn() && request.auth.token.email ==
+        id.lower() + '-' + string(get(/databases/$(database)/documents/logins/$(id)).data.v) + '@teamsavage.app';
+    }
+    function onlyKeys(keys) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys); }
+
+    match /admins/{uid} { allow read, write: if isAdmin(); }
+
+    // Configuración visible para todos (logo, colores, redes, clases, horarios)
+    match /config/{doc} { allow read: if true; allow write: if isAdmin(); }
+    match /counters/{doc} { allow read, write: if isAdmin(); }
+    match /templates/{doc} { allow read, write: if isAdmin(); }
+    match /announcements/{doc} { allow read, write: if isAdmin(); }
+    match /payments/{doc} { allow read, write: if isAdmin(); }
+
+    // Datos públicos mínimos para el inicio de sesión por ID
+    match /logins/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+      allow update: if loginEmailOk(id) && resource.data.claimed == false && onlyKeys(['claimed']) && request.resource.data.claimed == true;
+    }
+
+    match /members/{id} {
+      allow read: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin()
+        // El socio reclama su ID al crear su contraseña
+        || (loginEmailOk(id) && resource.data.uid == null && onlyKeys(['uid', 'activatedAt']) && request.resource.data.uid == request.auth.uid)
+        // El socio solo puede tocar su "última conexión"
+        || (signedIn() && resource.data.uid == request.auth.uid && onlyKeys(['lastSeen']));
+
+      match /{sub}/{docId} {
+        allow read: if isAdmin() || isOwner(id);
+        allow write: if isAdmin();
+      }
+    }
+
+    match /chats/{id} {
+      allow read: if isAdmin() || isOwner(id);
+      allow create, update: if isAdmin() || isOwner(id);
+      allow delete: if isAdmin();
+      match /messages/{msg} {
+        allow read: if isAdmin() || isOwner(id);
+        allow create: if isAdmin() || (isOwner(id) && request.resource.data.from == 'member' && request.resource.data.text is string && request.resource.data.text.size() <= 1000);
+        allow update, delete: if isAdmin();
+      }
+    }
+
+    // Reservas: cualquiera puede crear (formulario público); solo el admin y el dueño las leen
+    match /reservations/{code} {
+      allow read: if isAdmin() || (resource.data.memberId != null && isOwner(resource.data.memberId));
+      allow create: if request.resource.data.name is string && request.resource.data.name.size() > 2 && request.resource.data.name.size() < 80
+        && request.resource.data.phone is string && request.resource.data.phone.size() >= 10 && request.resource.data.phone.size() <= 15
+        && request.resource.data.date is string && request.resource.data.time is string
+        && ((request.resource.data.type == 'nueva' && request.resource.data.memberId == null && request.resource.data.status == 'pendiente')
+            || (request.resource.data.type == 'team' && isOwner(request.resource.data.memberId)));
+      allow update: if isAdmin()
+        || (resource.data.memberId != null && isOwner(resource.data.memberId) && onlyKeys(['status', 'cancelledAt']) && request.resource.data.status == 'cancelada');
+      allow delete: if isAdmin();
+    }
+
+    // Cupos ocupados por fecha (contador público)
+    match /slots/{date} {
+      allow read: if true;
+      allow write: if request.resource.data.size() < 200;
+    }
+
+    match /notifications/{n} {
+      allow read: if isAdmin() || (signedIn() && resource.data.to != 'admin' && isOwner(resource.data.to));
+      allow create: if isAdmin()
+        || (request.resource.data.to == 'admin' && request.resource.data.title is string && request.resource.data.title.size() < 120 && request.resource.data.body.size() < 400);
+      allow update: if isAdmin() || (signedIn() && resource.data.to != 'admin' && isOwner(resource.data.to) && onlyKeys(['read']));
+      allow delete: if isAdmin();
+    }
+
+    match /tokens/{t} {
+      allow create, update: if isAdmin() || (signedIn()
+        && request.resource.data.owner == 'member:' + request.auth.token.email.split('@')[0].split('-')[0].upper());
+      allow read, delete: if isAdmin();
+    }
+  }
+}

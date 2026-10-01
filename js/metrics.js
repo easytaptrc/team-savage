@@ -202,7 +202,7 @@ export function profileFactsHTML(m) {
   const act = ACTIVITY.find((x) => x[0] === m.activity)?.[1];
   const facts = [
     ["Edad", ageOf(m) != null ? `${ageOf(m)} años` : ""], ["Sexo", SEXES.find((s) => s[0] === m.sex)?.[1]], ["Estatura", m.height ? `${m.height} cm` : ""],
-    ["Peso inicial", m.initWeight ? `${m.initWeight} kg` : ""], ["Objetivo", [m.goal, m.goalDetail].filter(Boolean).join(" — ")], ["Peso objetivo", m.goalWeight ? `${m.goalWeight} kg` : ""],
+    ["Peso inicial", m.initWeight ? `${m.initWeight} kg` : ""], ["Masa muscular inicial", m.initMuscle ? `${m.initMuscle} kg` : ""], ["% Grasa inicial", m.initFat ? `${m.initFat} %` : ""], ["Objetivo", [m.goal, m.goalDetail].filter(Boolean).join(" — ")], ["Peso objetivo", m.goalWeight ? `${m.goalWeight} kg` : ""],
     ["Actividad física", act], ["Experiencia", m.experience], ["Servicio", m.service], ["Días para entrenar", m.trainingDays], ["Horario preferido", m.preferredTime],
     ["Ocupación", m.occupation], ["Lesiones", m.injuries], ["Enfermedades", m.conditions], ["Medicamentos", m.medications], ["Alergias / intolerancias", m.allergies],
     ["Cirugías", m.surgeries], ["Horas de sueño", m.sleepHours], ["Agua al día", m.waterIntake], ["Alcohol", m.alcohol], ["Tabaco", m.smoking],

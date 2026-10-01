@@ -11,7 +11,7 @@ import {
 } from "../ui.js";
 import { loadProgress, cancelReservation, changePasswordDialog } from "./client.js";
 import {
-  SEXES, GOALS, ACTIVITY, EXPERIENCE, ageOf, bmi, bmiCategory, bmr, tdee, METRIC_FIELDS, summaryHTML, chartBlockHTML, bindChart,
+  SEXES, GOALS, ACTIVITY, EXPERIENCE, ageOf, bmi, bmiCategory, bmr, tdee, METRIC_FIELDS, METRIC_GROUPS, summaryHTML, chartBlockHTML, bindChart,
   comparisonHTML, historyHTML, beforeAfterHTML, profileFactsHTML, progressFormHTML, readProgressForm,
 } from "../metrics.js";
 import { exportPlan, fileToText, parseRoutine, parseDiet, IMPORT_ACCEPT, DAYS_ORDER, DAY_LABEL } from "../docs.js";
@@ -189,7 +189,9 @@ function welcomeMsg(m) {
   return `¡Hola ${m.name.split(" ")[0]}! 💪 Bienvenido a ${CONFIG.gymName}.\n\nTu ID de usuario es: *${m.id}*\n\nCrea tu contraseña aquí:\n${appUrl()}#/team/crear\n\nDespués entra con tu ID para reservar, ver tu progreso, dieta, rutina y chatear con tu coach.`;
 }
 
-async function createMember(data) {
+async function createMember(input) {
+  const { initial, ...rest } = input;
+  const data = rest;
   const phone = cleanPhone(data.phone);
   const id = await runTransaction(db, async (tx) => {
     const cRef = doc(db, "counters", "members");
@@ -207,10 +209,9 @@ async function createMember(data) {
   });
   const m = { id, name: data.name.trim(), phone };
   // Las medidas iniciales se guardan como primer registro del historial
-  if (data.initWeight || data.initWaist || data.initFat || data.initHip) {
+  if (initial && Object.keys(initial).length) {
     await addDoc(collection(db, "members", id, "progress"), {
-      date: ymd(), weight: data.initWeight || null, waist: data.initWaist || null, hip: data.initHip || null, fat: data.initFat || null,
-      height: data.height || null, note: "Valoración inicial", by: "coach", at: serverTimestamp(),
+      date: ymd(), ...initial, height: data.height || null, note: "Valoración inicial", by: "coach", at: serverTimestamp(),
     });
   }
   if (data.attend !== false) await registerAttendance(m, "Alta");
@@ -239,7 +240,7 @@ async function resetAccess(m) {
 const TEXT_FIELDS = ["name", "email", "birth", "sex", "goal", "goalDetail", "activity", "experience", "service", "plan", "preferredTime", "occupation",
   "emergencyName", "emergencyPhone", "injuries", "conditions", "medications", "allergies", "surgeries", "alcohol", "smoking", "foodPrefs", "supplements",
   "referredBy", "notes", "waterIntake"];
-const NUM_FIELDS = ["age", "height", "initWeight", "initWaist", "initHip", "initFat", "goalWeight", "trainingDays", "sleepHours", "mealsPerDay"];
+const NUM_FIELDS = ["age", "height", "initWeight", "initMuscle", "initWaist", "initHip", "initFat", "goalWeight", "trainingDays", "sleepHours", "mealsPerDay"];
 
 function memberForm(m = {}, { isNew = false } = {}) {
   const ab = m.autoBlockDays ?? CONFIG.autoBlockDefault ?? 0;
@@ -267,14 +268,26 @@ function memberForm(m = {}, { isNew = false } = {}) {
       ${inp("emergencyName", "Contacto de emergencia")}
       ${inp("emergencyPhone", "Tel. de emergencia", 'type="tel"')}
     </div>`)}
-    ${group("Medidas iniciales", `<div class="grid3">
-      ${num("height", "Estatura (cm)", "0.5")}
-      ${num("initWeight", "Peso (kg)")}
-      <div class="field"><span>IMC</span><div class="calc" data-imc>—</div></div>
-      ${num("initWaist", "Cintura (cm)")}
-      ${num("initHip", "Cadera (cm)")}
-      ${num("initFat", "% Grasa (si se midió)")}
-    </div>${isNew ? `<p class="muted small">Se guardan como primer registro del historial de progreso.</p>` : ""}`)}
+    ${isNew
+      // Alta: valoración inicial completa (composición, perímetros y salud) → primer registro del historial
+      ? group("Valoración inicial", `<div class="grid3">
+          ${num("height", "Estatura (cm)", "0.5")}
+          <label class="field"><span>Peso (kg)</span><input class="inp" name="p_weight" type="number" step="any" inputmode="decimal"></label>
+          <div class="field"><span>IMC</span><div class="calc" data-imc>—</div></div>
+        </div>
+        ${METRIC_GROUPS.filter((g) => g.title !== "Seguimiento semanal").map((g) => `<h4 class="sub-h">${g.title}</h4><div class="grid3">
+          ${g.fields.filter(([k]) => k !== "weight").map(([k, l, u]) => `<label class="field"><span>${l}${u ? ` <em>(${u})</em>` : ""}</span><input class="inp" name="p_${k}" type="number" step="any" inputmode="decimal"></label>`).join("")}
+        </div>`).join("")}
+        <p class="muted small">Se guarda como el primer registro del historial de progreso. Deja vacío lo que no se haya medido.</p>`)
+      : group("Medidas iniciales", `<div class="grid3">
+          ${num("height", "Estatura (cm)", "0.5")}
+          ${num("initWeight", "Peso inicial (kg)")}
+          <div class="field"><span>IMC</span><div class="calc" data-imc>—</div></div>
+          ${num("initMuscle", "Masa muscular inicial (kg)")}
+          ${num("initFat", "% Grasa inicial")}
+          ${num("initWaist", "Cintura inicial (cm)")}
+          ${num("initHip", "Cadera inicial (cm)")}
+        </div><p class="muted small">Las nuevas mediciones se capturan en la pestaña Progreso.</p>`)}
     ${group("Objetivo y entrenamiento", `<div class="grid3">
       ${sel("goal", "Objetivo", GOALS)}
       ${num("goalWeight", "Peso objetivo (kg)")}
@@ -315,14 +328,15 @@ function bindMemberForm(f) {
   // Cálculos en vivo: edad, IMC y requerimiento calórico
   const calc = () => {
     if (f.birth.value) { const a = ageOf({ birth: f.birth.value }); if (a != null) f.age.value = a; }
-    const w = Number(f.initWeight.value) || null, h = Number(f.height.value) || null;
+    const wIn = f.p_weight || f.initWeight;
+    const w = Number(wIn.value) || null, h = Number(f.height.value) || null;
     const b = bmi(w, h), c = bmiCategory(b);
     $("[data-imc]", f).innerHTML = b ? `<b>${b}</b> <span class="chip-mini ${c.c}">${c.t}</span>` : "—";
     const m = { sex: f.sex.value, height: h, birth: f.birth.value, age: f.age.value, activity: f.activity.value };
     const B = bmr(m, w), T = tdee(m, w);
     $("[data-tdee]", f).innerHTML = B ? `TMB <b>${B}</b> kcal${T ? ` · GET <b>${T}</b> kcal` : ""}` : `<span class="muted small">Sexo, edad, estatura y peso</span>`;
   };
-  ["birth", "age", "initWeight", "height", "sex", "activity"].forEach((k) => f[k].addEventListener("input", calc));
+  ["birth", "age", "initWeight", "p_weight", "height", "sex", "activity"].forEach((k) => f[k]?.addEventListener("input", calc));
   calc();
 }
 function readMemberForm(f) {
@@ -334,6 +348,13 @@ function readMemberForm(f) {
   d.emergencyPhone = cleanPhone(d.emergencyPhone);
   if (d.birth) d.age = ageOf({ birth: d.birth });
   d.autoBlockDays = on === "c" ? Math.max(1, Number(f.abDays.value) || 30) : Number(on);
+  // Valoración inicial del alta (campos p_*): va al historial y los datos clave a la ficha
+  if (f.p_weight) {
+    d.initial = {};
+    METRIC_FIELDS.forEach(([k]) => { const el = f[`p_${k}`]; if (el && el.value !== "") d.initial[k] = Number(el.value); });
+    d.initWeight = d.initial.weight ?? null; d.initMuscle = d.initial.muscle ?? null; d.initFat = d.initial.fat ?? null;
+    d.initWaist = d.initial.waist ?? null; d.initHip = d.initial.hip ?? null;
+  }
   return d;
 }
 
@@ -473,7 +494,7 @@ const SECTIONS = {
         <thead><tr><th>Fecha</th><th>Hora</th><th>Cliente</th><th>Servicio</th><th>Objetivo</th><th>Estado</th><th></th></tr></thead>
         <tbody>${list.map((r) => `<tr>
           <td>${fmtDate(r.date)}</td><td class="mono">${fmtTime(r.time)}</td>
-          <td><b>${r.memberId ? `<a href="#/admin/cliente/${r.memberId}">${esc(r.name)}</a>` : esc(r.name)}</b><small class="block muted">${esc(r.phone)}${r.referredBy ? ` · Ref: ${esc(r.referredBy)}` : ""}</small></td>
+          <td><b>${r.memberId ? `<a href="#/admin/cliente/${r.memberId}">${esc(r.name)}</a>` : esc(r.name)}</b><small class="block muted">${esc(r.phone)}${r.age != null ? ` · ${r.age} años` : ""}${r.referredBy ? ` · Ref: ${esc(r.referredBy)}` : ""}</small>${r.email || r.emergencyPhone ? `<small class="block muted">${esc(r.email || "")}${r.emergencyPhone ? ` · Emerg. ${esc(r.emergencyPhone)}` : ""}</small>` : ""}</td>
           <td>${esc(r.className)}</td><td class="muted small">${esc(r.goal || "—")}</td><td>${statusChip(r.status)}</td>
           <td class="actions">
             ${r.status === "pendiente" ? `<button class="icon-btn sm" data-a="ok" data-id="${r.id}" title="Confirmar">${icon("check")}</button>` : ""}
@@ -497,7 +518,7 @@ const SECTIONS = {
           if (r.memberId) notify(r.memberId, "Reserva cancelada", `Tu reserva de ${r.className} (${fmtDate(r.date)} ${fmtTime(r.time)}) fue cancelada por el coach.`, "reserva");
           toast("Reserva cancelada");
         }
-        if (a === "member") newMemberDialog(S, { name: r.name, phone: r.phone, goal: r.goal, referredBy: r.referredBy }, async (m) => {
+        if (a === "member") newMemberDialog(S, { name: r.name, phone: r.phone, goalDetail: r.goal, referredBy: r.referredBy, birth: r.birth, age: r.age, email: r.email, emergencyPhone: r.emergencyPhone, service: r.className }, async (m) => {
           await updateDoc(doc(db, "reservations", r.id), { memberId: m.id, status: r.date <= today ? "completada" : r.status });
         });
       } catch (e) { console.error(e); toast("No se pudo actualizar", "err"); }

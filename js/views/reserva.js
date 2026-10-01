@@ -1,5 +1,6 @@
 // 2. RESERVA — formulario, calendario, hora y objetivo → pase (wallet)
 import { db, doc, getDocs, collection, query, where, runTransaction, serverTimestamp } from "../firebase.js";
+import { ageOf } from "../metrics.js";
 
 // Un documento por fecha + servicio + hora: { date, key, n } (n = lugares ocupados)
 export const slotKey = (cls, time) => `${cls}__${time}`;
@@ -35,9 +36,19 @@ export function mountReservaForm(host, { member = null, onDone } = {}) {
   <form class="card card-3d form reveal" novalidate>
     <label class="field"><span>Nombre completo *</span>
       <div class="input">${icon("user")}<input name="name" autocomplete="name" placeholder="Tu nombre" required ${member ? "readonly" : ""} value="${esc(member?.name || "")}"></div></label>
+    ${member ? "" : `<div class="grid-age">
+      <label class="field"><span>Fecha de nacimiento *</span>
+        <div class="input">${icon("calendar")}<input name="birth" type="date" required max="${ymd()}"></div></label>
+      <label class="field"><span>Edad</span>
+        <div class="input"><input name="age" readonly tabindex="-1" placeholder="—"></div></label>
+    </div>
+    <label class="field"><span>Correo electrónico *</span>
+      <div class="input">${icon("send")}<input name="email" type="email" inputmode="email" autocomplete="email" placeholder="tucorreo@ejemplo.com" required></div></label>`}
     <label class="field"><span>Número de celular *</span>
       <div class="input">${icon("phone")}<input name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="871 123 4567" required ${member ? "readonly" : ""} value="${esc(member?.phone || "")}"></div></label>
-    ${member ? "" : `<label class="field"><span>Recomendado por <em>(opcional)</em></span>
+    ${member ? "" : `<label class="field"><span>Teléfono de emergencia *</span>
+      <div class="input">${icon("phone")}<input name="emergencyPhone" type="tel" inputmode="tel" placeholder="Familiar o contacto cercano" required></div></label>
+    <label class="field"><span>Recomendado por <em>(opcional)</em></span>
       <div class="input">${icon("users")}<input name="ref" placeholder="Nombre"></div></label>`}
     <label class="field"><span>Selecciona el servicio</span>
       <div class="input select">${icon("dumbbell")}<select name="cls">${CONFIG.classes.map((c) => `<option>${esc(c.name)}</option>`).join("")}</select></div></label>
@@ -106,6 +117,8 @@ export function mountReservaForm(host, { member = null, onDone } = {}) {
   }
 
   form.cls.onchange = () => { state.cls = form.cls.value; state.time = null; drawHours(); };
+  // La edad se calcula sola con la fecha de nacimiento
+  form.birth?.addEventListener("input", () => { const a = ageOf({ birth: form.birth.value }); form.age.value = a != null ? `${a} años` : ""; });
 
   form.onsubmit = async (e) => {
     e.preventDefault();
@@ -113,6 +126,17 @@ export function mountReservaForm(host, { member = null, onDone } = {}) {
     const phone = cleanPhone(form.phone.value);
     if (name.length < 3) return toast("Escribe tu nombre completo", "err");
     if (phone.length < 10) return toast("Escribe un celular válido (10 dígitos)", "err");
+    const extra = {};
+    if (!member) {
+      const age = ageOf({ birth: form.birth.value });
+      const email = form.email.value.trim().toLowerCase();
+      const emergencyPhone = cleanPhone(form.emergencyPhone.value);
+      if (!form.birth.value || age == null || age < 5) return toast("Escribe tu fecha de nacimiento", "err");
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return toast("Escribe un correo válido", "err");
+      if (emergencyPhone.length < 10) return toast("Escribe un teléfono de emergencia válido (10 dígitos)", "err");
+      if (emergencyPhone === phone) return toast("El teléfono de emergencia debe ser de otra persona", "err");
+      Object.assign(extra, { birth: form.birth.value, age, email, emergencyPhone });
+    }
     if (!state.date) return toast("Selecciona una fecha", "err");
     if (!state.time) return toast("Selecciona una hora", "err");
 
@@ -124,7 +148,7 @@ export function mountReservaForm(host, { member = null, onDone } = {}) {
     const r = {
       code, type: member ? "team" : "nueva", memberId: member?.id || null,
       name, phone, referredBy: form.ref?.value.trim() || "", className: state.cls,
-      date: state.date, time: state.time, goal: form.goal.value.trim(), status: member ? "confirmada" : "pendiente",
+      date: state.date, time: state.time, goal: form.goal.value.trim(), status: member ? "confirmada" : "pendiente", ...extra,
     };
     try {
       await runTransaction(db, async (tx) => {

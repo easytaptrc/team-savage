@@ -38,17 +38,23 @@ service cloud.firestore {
       allow update: if isAdmin()
         // El socio reclama su ID al crear su contraseña
         || (loginEmailOk(id) && resource.data.uid == null && onlyKeys(['uid', 'activatedAt']) && request.resource.data.uid == request.auth.uid)
-        // El socio solo puede tocar su "última conexión"
-        || (signedIn() && resource.data.uid == request.auth.uid && onlyKeys(['lastSeen']));
+        // El socio SOLO puede cambiar su foto de perfil y sus datos de contacto (y su última conexión)
+        || (signedIn() && resource.data.uid == request.auth.uid && memberProfileOk());
 
+      // Progreso, fotos, dieta, rutina y asistencias: el socio solo lee; únicamente el coach modifica
       match /{sub}/{docId} {
         allow read: if isAdmin() || isOwner(id);
         allow write: if isAdmin();
       }
-      // El socio puede registrar su propio avance (peso, medidas, cómo se sintió)
-      match /progress/{docId} {
-        allow create: if isOwner(id) && request.resource.data.by == 'member' && request.resource.data.date is string;
-      }
+    }
+    function memberProfileOk() {
+      let d = request.resource.data;
+      return onlyKeys(['avatar', 'email', 'phone', 'emergencyName', 'emergencyPhone', 'lastSeen', 'profileUpdatedAt'])
+        && (!('avatar' in d) || (d.avatar is string && d.avatar.size() < 400000))
+        && (!('email' in d) || (d.email is string && d.email.size() < 120))
+        && (!('phone' in d) || (d.phone is string && d.phone.size() >= 10 && d.phone.size() <= 15))
+        && (!('emergencyName' in d) || (d.emergencyName is string && d.emergencyName.size() < 80))
+        && (!('emergencyPhone' in d) || (d.emergencyPhone is string && d.emergencyPhone.size() <= 15));
     }
 
     match /chats/{id} {

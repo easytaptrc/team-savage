@@ -546,3 +546,10 @@ td.delta.up { color: var(--ok); } td.delta.down { color: var(--err); }
 .rot180 { rotate: 180deg; }
 .mono-sm { font-family: var(--mono); font-size: 12.5px; line-height: 1.55; }
 .form .seg { display: flex; flex-wrap: wrap; }
+.grid-age { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 10px; }
+.sub-h { margin: 14px 0 6px; font: 600 12px var(--display); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.avatar-edit { position: relative; display: inline-block; margin: 0 auto; cursor: pointer; }
+.avatar-cam { position: absolute; right: -2px; bottom: -2px; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--metal); color: var(--on-metal); box-shadow: 0 0 0 3px var(--surface); transition: transform .25s var(--spring); }
+.avatar-edit:hover .avatar-cam { transform: scale(1.1); }
+.avatar-cam .ic { width: 16px; height: 16px; }
+.grid-age > * { min-width: 0; } .grid-age .input { padding: 0 10px; gap: 8px; } .grid-age .input input { width: 100%; min-width: 0; }

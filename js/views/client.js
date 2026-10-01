@@ -7,6 +7,7 @@ import {
 import {
   CONFIG, $, $$, esc, icon, toast, setBusy, effectiveStatus, listenNotifications, notifPanel, notify, lineChart,
   fmtDate, fmtTime, fmtDateTime, timeAgo, passHTML, enhance, downloadPass, confirmDialog, modal, ymd, parseYmd, toDate, money, daysSince,
+  cleanPhone, compressImage,
 } from "../ui.js";
 import { mountReservaForm, slotId } from "./reserva.js";
 import {
@@ -151,7 +152,7 @@ const SECTIONS = {
     const C = $("[data-c]", el);
     C.innerHTML = `
       <div class="reveal">${summaryHTML(m, prog)}</div>
-      <button class="btn btn-metal w100 mt reveal" data-log>${icon("plus")} Registrar mi avance</button>
+      <p class="muted small center mt-s reveal">Tu coach registra y actualiza tu progreso. Si notas algún dato incorrecto, escríbele por el chat.</p>
       <div class="card mt reveal"><h3 class="h3">Evolución</h3>${chartBlockHTML()}</div>
       <div class="card mt reveal"><h3 class="h3">Inicial vs actual</h3>${comparisonHTML(m, prog)}</div>
       <h3 class="h3 mt reveal">Fotos</h3>
@@ -161,25 +162,6 @@ const SECTIONS = {
       <div class="card reveal">${historyHTML(m, prog)}</div>`;
     bindChart(C, m, prog);
     $$(".photo img, .ba img", C).forEach((img) => (img.onclick = () => modal(`<img class="photo-full" src="${img.src}" alt="">`, { wide: true })));
-    $("[data-log]", C).onclick = () => {
-      const d = modal(`<h3 class="h3">Registrar mi avance</h3><p class="muted small">Tu coach verá este registro en tu historial.</p>
-        <form class="form" novalidate><label class="field"><span>Fecha</span><input class="inp" type="date" name="date" value="${ymd()}"></label>
-        ${progressFormHTML({ simple: true })}
-        <label class="field"><span>¿Cómo te sentiste esta semana?</span><textarea class="inp" name="note" rows="2"></textarea></label>
-        <button type="submit" class="btn btn-metal w100 lg" data-submit>${icon("check")} Guardar</button></form>`);
-      const f = $("form", d.el);
-      f.onsubmit = async (e) => {
-        e.preventDefault();
-        const data = { date: f.date.value || ymd(), note: f.note.value.trim(), ...readProgressForm(f) };
-        if (!METRIC_FIELDS.some(([k]) => data[k] != null) && !data.note) return toast("Captura al menos un dato", "err");
-        const btn = $("[data-submit]", f); setBusy(btn, true);
-        try {
-          await addDoc(collection(db, "members", S.id, "progress"), { ...data, by: "member", at: serverTimestamp() });
-          notify("admin", `Avance de ${m.name}`, `${data.weight ? `Peso ${data.weight} kg` : "Nuevo registro"}${data.note ? ` · ${data.note.slice(0, 80)}` : ""}`, "progreso");
-          toast("¡Avance registrado!"); d.close(); SECTIONS.progreso(el, S).then(() => enhance(el));
-        } catch (err) { console.error(err); setBusy(btn, false); toast("No se pudo guardar", "err"); }
-      };
-    };
   },
 
   async dieta(el, S) {
@@ -244,18 +226,49 @@ const SECTIONS = {
   async perfil(el, S) {
     const m = S.member;
     el.innerHTML = `${back("Mi perfil")}
-      <div class="card reveal profile"><div class="avatar xl">${m.avatar ? `<img src="${m.avatar}" alt="">` : esc(m.name[0])}</div>
+      <div class="card reveal profile">
+        <label class="avatar-edit" title="Cambiar foto"><div class="avatar xl">${m.avatar ? `<img src="${m.avatar}" alt="">` : esc(m.name[0])}</div>
+          <span class="avatar-cam">${icon("camera")}</span><input type="file" accept="image/*" data-av hidden></label>
         <h3>${esc(m.name)}</h3><p class="muted mono">${esc(S.id)}</p>
-        <div class="kv"><span>Celular</span><b>${esc(m.phone)}</b></div>
         <div class="kv"><span>Plan</span><b>${esc(m.plan || "—")}</b></div>
         <div class="kv"><span>Vigencia</span><b>${m.paidUntil ? fmtDate(m.paidUntil) : "—"}</b></div>
         <div class="kv"><span>Miembro desde</span><b>${fmtDate(m.createdAt)}</b></div></div>
-      <div class="card reveal"><h3 class="h3">Mi ficha</h3>${profileFactsHTML(m)}<p class="muted small mt-s">Si algún dato cambió, avísale a tu coach por el chat.</p></div>
+      <form class="card form reveal" data-pf novalidate><h3 class="h3">Mis datos de contacto</h3>
+        <label class="field"><span>Correo electrónico</span><div class="input">${icon("send")}<input name="email" type="email" inputmode="email" value="${esc(m.email || "")}" placeholder="tucorreo@ejemplo.com"></div></label>
+        <label class="field"><span>Celular (WhatsApp) *</span><div class="input">${icon("phone")}<input name="phone" type="tel" inputmode="tel" value="${esc(m.phone || "")}"></div></label>
+        <label class="field"><span>Contacto de emergencia</span><div class="input">${icon("user")}<input name="emergencyName" value="${esc(m.emergencyName || "")}" placeholder="Nombre"></div></label>
+        <label class="field"><span>Teléfono de emergencia</span><div class="input">${icon("phone")}<input name="emergencyPhone" type="tel" inputmode="tel" value="${esc(m.emergencyPhone || "")}"></div></label>
+        <button type="submit" class="btn btn-metal w100" data-submit>${icon("check")} Guardar cambios</button></form>
+      <div class="card reveal mt"><h3 class="h3">Mi ficha</h3>${profileFactsHTML(m)}<p class="muted small mt-s">Tu ficha, medidas y progreso solo los modifica tu coach. Si algo cambió, avísale por el chat.</p></div>
       <div class="card reveal stack mt">
         <button class="btn btn-ghost w100" data-notif>${icon("bell")} Activar notificaciones</button>
         <button class="btn btn-ghost w100" data-pw>${icon("lock")} Cambiar contraseña</button>
         <button class="btn btn-ghost w100 install-only" onclick="installApp()">${icon("download")} Instalar app</button>
         <button class="btn btn-ghost danger w100" data-out>${icon("logout")} Cerrar sesión</button></div>`;
+    // Lo único que el socio puede modificar: foto de perfil y datos de contacto
+    $("[data-av]", el).onchange = async (e) => {
+      const file = e.target.files[0]; if (!file) return;
+      try {
+        await updateDoc(doc(db, "members", S.id), { avatar: await compressImage(file, 240, 0.8), profileUpdatedAt: serverTimestamp() });
+        toast("Foto actualizada");
+      } catch (err) { console.error(err); toast("No se pudo subir la foto", "err"); }
+    };
+    const f = $("[data-pf]", el);
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      const email = f.email.value.trim().toLowerCase();
+      const phone = cleanPhone(f.phone.value), emergencyPhone = cleanPhone(f.emergencyPhone.value);
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return toast("Correo inválido", "err");
+      if (phone.length < 10 || phone.length > 15) return toast("Celular inválido (10 dígitos)", "err");
+      if (emergencyPhone && emergencyPhone.length < 10) return toast("Teléfono de emergencia inválido", "err");
+      const btn = $("[data-submit]", f); setBusy(btn, true, "Guardando…");
+      try {
+        await updateDoc(doc(db, "members", S.id), { email, phone, emergencyName: f.emergencyName.value.trim(), emergencyPhone, profileUpdatedAt: serverTimestamp() });
+        notify("admin", "Perfil actualizado", `${m.name} actualizó sus datos de contacto`, "team");
+        toast("Datos guardados");
+      } catch (err) { console.error(err); toast("No se pudo guardar", "err"); }
+      setBusy(btn, false);
+    };
     $("[data-out]", el).onclick = async () => { await signOut(auth); location.hash = "#/"; };
     $("[data-notif]", el).onclick = async () => {
       if (!("Notification" in window)) return toast("Tu navegador no soporta notificaciones", "err");

@@ -60,14 +60,18 @@ En iPhone las push web solo funcionan si la app se **instala** en la pantalla de
 
 ## Seguimiento nutricional y fitness
 - **Ficha completa al registrar al cliente:** datos generales (edad/fecha de nacimiento, sexo, contacto, emergencia),
-  medidas iniciales (estatura, peso, IMC automático, cintura, cadera, % grasa), objetivo, nivel de actividad,
+  valoración inicial completa (estatura, peso, IMC automático, % grasa, masa muscular, grasa visceral, agua, masa ósea,
+  edad metabólica, 9 perímetros, presión, FC y glucosa), objetivo, nivel de actividad,
   experiencia, servicio, salud (lesiones, enfermedades, medicamentos, alergias), hábitos y preferencias alimentarias.
   Las medidas iniciales quedan como primer registro del historial.
 - **Progreso (coach y cliente):** peso, IMC con categoría, % grasa, masa muscular, grasa visceral, agua, masa ósea,
   edad metabólica, 9 perímetros, presión arterial, FC, glucosa, apego a dieta/entreno, energía, sueño, agua y pasos.
   Calcula masa grasa/magra, índice cintura-cadera, cintura-estatura, metabolismo basal (Mifflin-St Jeor),
   gasto diario y rango de peso saludable. Gráfica por métrica, tabla inicial vs actual, historial y fotos antes/ahora.
-  El cliente también puede registrar su propio avance (aparece marcado como "Cliente").
+  Solo el coach registra y modifica el progreso; el cliente lo consulta.
+- **Lo que el cliente puede modificar:** únicamente su foto de perfil, correo, celular y contacto/teléfono de emergencia.
+- **Reserva pública:** pide nombre, fecha de nacimiento (la edad se calcula sola), correo, celular, teléfono de emergencia,
+  servicio, fecha, hora y objetivo. Al crear el socio desde la reserva, esos datos pasan a su ficha.
 - **Servicios:** Asesoría personal, Asesoría online y Asesoría presencial (editables en Configuración).
 
 ## Importar y exportar rutina / dieta

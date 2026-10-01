@@ -1,5 +1,9 @@
 // 2. RESERVA — formulario, calendario, hora y objetivo → pase (wallet)
-import { db, doc, getDoc, runTransaction, serverTimestamp } from "../firebase.js";
+import { db, doc, getDocs, collection, query, where, runTransaction, serverTimestamp } from "../firebase.js";
+
+// Un documento por fecha + servicio + hora: { date, key, n } (n = lugares ocupados)
+export const slotKey = (cls, time) => `${cls}__${time}`;
+export const slotId = (date, cls, time) => `${date}__${encodeURIComponent(cls)}__${time.replace(":", "")}`;
 import {
   CONFIG, $, $$, esc, icon, toast, setBusy, ymd, parseYmd, pad, MONTHS, fmtTime, cleanPhone,
   notify, passHTML, enhance, downloadPass, icsFor, fmtDate,
@@ -14,7 +18,7 @@ export async function render(root) {
       <span></span>
     </header>
     <h1 class="title reveal">Reserva tu sesión</h1>
-    <p class="subtitle reveal">Agenda tu clase o entrenamiento</p>
+    <p class="subtitle reveal">Agenda tu asesoría o entrenamiento</p>
     <div id="reserva-slot"></div>
   </section>`;
   mountReservaForm($("#reserva-slot", root));
@@ -35,7 +39,7 @@ export function mountReservaForm(host, { member = null, onDone } = {}) {
       <div class="input">${icon("phone")}<input name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="871 123 4567" required ${member ? "readonly" : ""} value="${esc(member?.phone || "")}"></div></label>
     ${member ? "" : `<label class="field"><span>Recomendado por <em>(opcional)</em></span>
       <div class="input">${icon("users")}<input name="ref" placeholder="Nombre"></div></label>`}
-    <label class="field"><span>Selecciona la clase</span>
+    <label class="field"><span>Selecciona el servicio</span>
       <div class="input select">${icon("dumbbell")}<select name="cls">${CONFIG.classes.map((c) => `<option>${esc(c.name)}</option>`).join("")}</select></div></label>
     <div class="field"><span>Selecciona la fecha</span><div class="calendar" data-cal></div></div>
     <div class="field"><span>Selecciona la hora</span><div class="hours" data-hours><p class="muted small">Primero elige una fecha</p></div></div>
@@ -76,7 +80,10 @@ export function mountReservaForm(host, { member = null, onDone } = {}) {
 
   async function loadSlots() {
     hoursEl.innerHTML = `<span class="spinner"></span>`;
-    try { const s = await getDoc(doc(db, "slots", state.date)); state.slots = s.exists() ? s.data() : {}; }
+    try {
+      const snap = await getDocs(query(collection(db, "slots"), where("date", "==", state.date)));
+      state.slots = Object.fromEntries(snap.docs.map((d) => [d.data().key, d.data().n || 0]));
+    }
     catch { state.slots = {}; }
     drawHours();
   }
@@ -121,11 +128,11 @@ export function mountReservaForm(host, { member = null, onDone } = {}) {
     };
     try {
       await runTransaction(db, async (tx) => {
-        const sRef = doc(db, "slots", state.date);
+        const sRef = doc(db, "slots", slotId(state.date, state.cls, state.time));
         const s = await tx.get(sRef);
-        const used = (s.exists() && s.data()[key]) || 0;
+        const used = (s.exists() && s.data().n) || 0;
         if (used >= cap) throw new Error("full");
-        tx.set(sRef, { [key]: used + 1 }, { merge: true });
+        tx.set(sRef, s.exists() ? { date: state.date, key, n: used + 1 } : { date: state.date, key, n: 1 });
         tx.set(doc(db, "reservations", code), { ...r, createdAt: serverTimestamp() });
       });
       notify("admin", member ? "Reserva Team" : "Nueva reserva", `${name} · ${state.cls} · ${fmtDate(state.date)} ${fmtTime(state.time)}`, "reserva");

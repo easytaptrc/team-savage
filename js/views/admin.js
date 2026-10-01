@@ -10,6 +10,11 @@ import {
   listenNotifications, notifPanel, lineChart, barChart, compressImage, passHTML, enhance, MONTHS, DAYS,
 } from "../ui.js";
 import { loadProgress, cancelReservation, changePasswordDialog } from "./client.js";
+import {
+  SEXES, GOALS, ACTIVITY, EXPERIENCE, ageOf, bmi, bmiCategory, bmr, tdee, METRIC_FIELDS, summaryHTML, chartBlockHTML, bindChart,
+  comparisonHTML, historyHTML, beforeAfterHTML, profileFactsHTML, progressFormHTML, readProgressForm,
+} from "../metrics.js";
+import { exportPlan, fileToText, parseRoutine, parseDiet, IMPORT_ACCEPT, DAYS_ORDER, DAY_LABEL } from "../docs.js";
 
 const NAV = [
   ["inicio", "home", "Inicio"], ["reservas", "calendar", "Reservas"], ["clientes", "users", "Clientes"],
@@ -17,8 +22,6 @@ const NAV = [
   ["chat", "chat", "Chat"], ["reportes", "list", "Reportes"], ["ingresos", "money", "Ingresos"],
   ["avisos", "megaphone", "Avisos"], ["config", "cog", "Configuración"],
 ];
-const DAYS_ORDER = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"];
-const DAY_LABEL = { lunes: "Lunes", martes: "Martes", miercoles: "Miércoles", jueves: "Jueves", viernes: "Viernes", sabado: "Sábado", domingo: "Domingo" };
 const appUrl = () => location.origin + location.pathname.replace(/index\.html$/, "");
 
 export async function render(root, r) {
@@ -100,7 +103,7 @@ export async function render(root, r) {
     if (!loaded.m || !loaded.r) return;
     const fn = SECTIONS[section] || SECTIONS.inicio;
     const y = window.scrollY;
-    await fn(body, S, arg);
+    await fn(body, S, arg, soft);
     enhance(body);
     if (soft) window.scrollTo(0, y);
   }
@@ -195,8 +198,7 @@ async function createMember(data) {
     const id = `TS${next}`;
     tx.set(cRef, { next: next + 1 });
     tx.set(doc(db, "members", id), {
-      name: data.name.trim(), phone, goal: data.goal || "", goalWeight: data.goalWeight ? Number(data.goalWeight) : null,
-      plan: data.plan || "", notes: data.notes || "", birth: data.birth || "", referredBy: data.referredBy || "",
+      ...data, name: data.name.trim(), phone,
       autoBlockDays: Number(data.autoBlockDays ?? CONFIG.autoBlockDefault ?? 0), status: "activo", uid: null,
       visits: 0, createdAt: serverTimestamp(), lastVisit: serverTimestamp(), paidUntil: null,
     });
@@ -204,6 +206,13 @@ async function createMember(data) {
     return id;
   });
   const m = { id, name: data.name.trim(), phone };
+  // Las medidas iniciales se guardan como primer registro del historial
+  if (data.initWeight || data.initWaist || data.initFat || data.initHip) {
+    await addDoc(collection(db, "members", id, "progress"), {
+      date: ymd(), weight: data.initWeight || null, waist: data.initWaist || null, hip: data.initHip || null, fat: data.initFat || null,
+      height: data.height || null, note: "Valoración inicial", by: "coach", at: serverTimestamp(),
+    });
+  }
   if (data.attend !== false) await registerAttendance(m, "Alta");
   return m;
 }
@@ -226,44 +235,113 @@ async function resetAccess(m) {
   await updateDoc(doc(db, "members", m.id), { uid: null });
 }
 
-function memberForm(m = {}) {
+/* ---------- Ficha completa del cliente (alta y edición) ---------- */
+const TEXT_FIELDS = ["name", "email", "birth", "sex", "goal", "goalDetail", "activity", "experience", "service", "plan", "preferredTime", "occupation",
+  "emergencyName", "emergencyPhone", "injuries", "conditions", "medications", "allergies", "surgeries", "alcohol", "smoking", "foodPrefs", "supplements",
+  "referredBy", "notes", "waterIntake"];
+const NUM_FIELDS = ["age", "height", "initWeight", "initWaist", "initHip", "initFat", "goalWeight", "trainingDays", "sleepHours", "mealsPerDay"];
+
+function memberForm(m = {}, { isNew = false } = {}) {
   const ab = m.autoBlockDays ?? CONFIG.autoBlockDefault ?? 0;
   const custom = ![0, 30, 60].includes(Number(ab));
+  const v = (k) => esc(m[k] ?? "");
+  const inp = (k, label, attrs = "") => `<label class="field"><span>${label}</span><input class="inp" name="${k}" value="${v(k)}" ${attrs}></label>`;
+  const num = (k, label, step = "0.1") => inp(k, label, `type="number" step="${step}" inputmode="decimal"`);
+  const sel = (k, label, opts, empty = "—") => {
+    const list = opts.map((o) => (Array.isArray(o) ? o : [o, o]));
+    if (m[k] && !list.some(([val]) => val === m[k])) list.push([m[k], m[k]]);
+    return `<label class="field"><span>${label}</span><select class="inp" name="${k}"><option value="">${empty}</option>${list.map(([val, l]) => `<option value="${esc(val)}" ${m[k] === val ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
+  };
+  const area = (k, label, ph = "") => `<label class="field"><span>${label}</span><textarea class="inp" name="${k}" rows="2" placeholder="${esc(ph)}">${v(k)}</textarea></label>`;
+  const group = (title, body, open = true) => `<details class="fgroup" ${open ? "open" : ""}><summary>${title}</summary>${body}</details>`;
   return `
-    <div class="grid2">
-      <label class="field"><span>Nombre completo *</span><input class="inp" name="name" value="${esc(m.name || "")}" required></label>
-      <label class="field"><span>Celular (WhatsApp) *</span><input class="inp" name="phone" type="tel" value="${esc(m.phone || "")}" required></label>
-      <label class="field"><span>Plan</span><select class="inp" name="plan"><option value="">—</option>${CONFIG.plans.map((p) => `<option ${m.plan === p.name ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>
-      <label class="field"><span>Peso objetivo (kg)</span><input class="inp" name="goalWeight" type="number" step="0.1" value="${esc(m.goalWeight ?? "")}"></label>
-      <label class="field"><span>Fecha de nacimiento</span><input class="inp" name="birth" type="date" value="${esc(m.birth || "")}"></label>
-      <label class="field"><span>Recomendado por</span><input class="inp" name="referredBy" value="${esc(m.referredBy || "")}"></label>
-    </div>
-    <label class="field"><span>Objetivo</span><input class="inp" name="goal" value="${esc(m.goal || "")}" placeholder="Bajar de peso, ganar masa…"></label>
-    <div class="field"><span>Bloqueo automático por inactividad</span>
-      <div class="seg" data-ab>${[[0, "Nunca"], [30, "1 mes"], [60, "2 meses"], ["c", "Personalizado"]].map(([v, l]) => `<button type="button" data-v="${v}" class="${(custom ? "c" : String(ab)) === String(v) ? "on" : ""}">${l}</button>`).join("")}</div>
-      <div class="row gap-s mt-s" data-abc ${custom ? "" : "hidden"}><input class="inp" name="abDays" type="number" min="1" value="${custom ? ab : 45}" style="max-width:120px"><span class="muted">días sin venir</span></div></div>
-    <label class="field"><span>Notas del coach (lesiones, observaciones)</span><textarea class="inp" name="notes" rows="2">${esc(m.notes || "")}</textarea></label>`;
+    ${group("Datos generales", `<div class="grid3">
+      <label class="field span2"><span>Nombre completo *</span><input class="inp" name="name" value="${v("name")}" required autocomplete="off"></label>
+      ${sel("sex", "Sexo", SEXES)}
+      <label class="field"><span>Fecha de nacimiento</span><input class="inp" name="birth" type="date" value="${v("birth")}"></label>
+      ${num("age", "Edad", "1")}
+      <label class="field"><span>Celular (WhatsApp) *</span><input class="inp" name="phone" type="tel" value="${v("phone")}" required></label>
+      ${inp("email", "Correo", 'type="email"')}
+      ${inp("occupation", "Ocupación")}
+      ${inp("referredBy", "Recomendado por")}
+      ${inp("emergencyName", "Contacto de emergencia")}
+      ${inp("emergencyPhone", "Tel. de emergencia", 'type="tel"')}
+    </div>`)}
+    ${group("Medidas iniciales", `<div class="grid3">
+      ${num("height", "Estatura (cm)", "0.5")}
+      ${num("initWeight", "Peso (kg)")}
+      <div class="field"><span>IMC</span><div class="calc" data-imc>—</div></div>
+      ${num("initWaist", "Cintura (cm)")}
+      ${num("initHip", "Cadera (cm)")}
+      ${num("initFat", "% Grasa (si se midió)")}
+    </div>${isNew ? `<p class="muted small">Se guardan como primer registro del historial de progreso.</p>` : ""}`)}
+    ${group("Objetivo y entrenamiento", `<div class="grid3">
+      ${sel("goal", "Objetivo", GOALS)}
+      ${num("goalWeight", "Peso objetivo (kg)")}
+      ${sel("activity", "Nivel de actividad física", ACTIVITY.map(([k, l]) => [k, l]))}
+      ${sel("experience", "Experiencia entrenando", EXPERIENCE)}
+      ${sel("service", "Servicio", CONFIG.classes.map((c) => c.name))}
+      ${sel("plan", "Plan", CONFIG.plans.map((p) => p.name))}
+      ${num("trainingDays", "Días por semana para entrenar", "1")}
+      ${inp("preferredTime", "Horario preferido", 'placeholder="Ej. 7:00 AM"')}
+      <div class="field"><span>Requerimiento estimado</span><div class="calc" data-tdee>—</div></div>
+    </div>${area("goalDetail", "Detalle del objetivo", "Ej. bajar 8 kg para diciembre, prepararse para un 10K…")}`)}
+    ${group("Salud", `<div class="grid2">
+      ${area("injuries", "Lesiones o dolores", "Rodilla, espalda baja…")}
+      ${area("conditions", "Enfermedades / condiciones", "Diabetes, hipertensión, tiroides…")}
+      ${area("medications", "Medicamentos")}
+      ${area("allergies", "Alergias / intolerancias alimentarias", "Lactosa, gluten, mariscos…")}
+      ${area("surgeries", "Cirugías recientes")}
+      ${area("supplements", "Suplementos que consume")}
+    </div>`, isNew)}
+    ${group("Hábitos y alimentación", `<div class="grid3">
+      ${num("sleepHours", "Horas de sueño", "0.5")}
+      ${inp("waterIntake", "Agua al día", 'placeholder="Ej. 2 L"')}
+      ${num("mealsPerDay", "Comidas al día", "1")}
+      ${sel("alcohol", "Alcohol", ["No", "Ocasional", "Fines de semana", "Frecuente"])}
+      ${sel("smoking", "Tabaco", ["No", "Sí", "Ocasional"])}
+    </div>${area("foodPrefs", "Preferencias alimentarias", "Alimentos que no le gustan, vegetariano, horarios de comida…")}`, isNew)}
+    ${group("Cuenta y notas", `
+      <div class="field"><span>Bloqueo automático por inactividad</span>
+        <div class="seg" data-ab>${[[0, "Nunca"], [30, "1 mes"], [60, "2 meses"], ["c", "Personalizado"]].map(([val, l]) => `<button type="button" data-v="${val}" class="${(custom ? "c" : String(ab)) === String(val) ? "on" : ""}">${l}</button>`).join("")}</div>
+        <div class="row gap-s mt-s" data-abc ${custom ? "" : "hidden"}><input class="inp" name="abDays" type="number" min="1" value="${custom ? ab : 45}" style="max-width:120px"><span class="muted">días sin venir</span></div></div>
+      ${area("notes", "Notas del coach", "Observaciones generales")}`)}`;
 }
 function bindMemberForm(f) {
   $$("[data-ab] button", f).forEach((b) => (b.onclick = () => {
     $$("[data-ab] button", f).forEach((x) => x.classList.toggle("on", x === b));
     $("[data-abc]", f).hidden = b.dataset.v !== "c";
   }));
+  // Cálculos en vivo: edad, IMC y requerimiento calórico
+  const calc = () => {
+    if (f.birth.value) { const a = ageOf({ birth: f.birth.value }); if (a != null) f.age.value = a; }
+    const w = Number(f.initWeight.value) || null, h = Number(f.height.value) || null;
+    const b = bmi(w, h), c = bmiCategory(b);
+    $("[data-imc]", f).innerHTML = b ? `<b>${b}</b> <span class="chip-mini ${c.c}">${c.t}</span>` : "—";
+    const m = { sex: f.sex.value, height: h, birth: f.birth.value, age: f.age.value, activity: f.activity.value };
+    const B = bmr(m, w), T = tdee(m, w);
+    $("[data-tdee]", f).innerHTML = B ? `TMB <b>${B}</b> kcal${T ? ` · GET <b>${T}</b> kcal` : ""}` : `<span class="muted small">Sexo, edad, estatura y peso</span>`;
+  };
+  ["birth", "age", "initWeight", "height", "sex", "activity"].forEach((k) => f[k].addEventListener("input", calc));
+  calc();
 }
 function readMemberForm(f) {
   const on = $("[data-ab] .on", f)?.dataset.v || "0";
-  return {
-    name: f.name.value.trim(), phone: cleanPhone(f.phone.value), plan: f.plan.value, goalWeight: f.goalWeight.value ? Number(f.goalWeight.value) : null,
-    birth: f.birth.value, referredBy: f.referredBy.value.trim(), goal: f.goal.value.trim(), notes: f.notes.value.trim(),
-    autoBlockDays: on === "c" ? Math.max(1, Number(f.abDays.value) || 30) : Number(on),
-  };
+  const d = {};
+  TEXT_FIELDS.forEach((k) => { if (f[k]) d[k] = f[k].value.trim(); });
+  NUM_FIELDS.forEach((k) => { if (f[k]) d[k] = f[k].value === "" ? null : Number(f[k].value); });
+  d.phone = cleanPhone(f.phone.value);
+  d.emergencyPhone = cleanPhone(d.emergencyPhone);
+  if (d.birth) d.age = ageOf({ birth: d.birth });
+  d.autoBlockDays = on === "c" ? Math.max(1, Number(f.abDays.value) || 30) : Number(on);
+  return d;
 }
 
 export function newMemberDialog(S, prefill = {}, onCreated) {
   const d = modal(`<h3 class="h3">Nuevo cliente · Dar asistencia</h3>
     <p class="muted small">Se genera un ID automáticamente y se registra su primera asistencia.</p>
-    <form class="form" novalidate>${memberForm(prefill)}
-      <button class="btn btn-metal w100 lg mt">${icon("plus")} Crear cliente y generar ID</button></form>`, { wide: true });
+    <form class="form" novalidate>${memberForm(prefill, { isNew: true })}
+      <button type="submit" class="btn btn-metal w100 lg mt" data-submit>${icon("plus")} Crear cliente y generar ID</button></form>`, { wide: true });
   const f = $("form", d.el); bindMemberForm(f);
   f.onsubmit = async (e) => {
     e.preventDefault();
@@ -272,7 +350,7 @@ export function newMemberDialog(S, prefill = {}, onCreated) {
     if (data.phone.length < 10) return toast("Celular inválido", "err");
     const dup = [...S.members.values()].find((m) => cleanPhone(m.phone) === data.phone || m.name.toLowerCase() === data.name.toLowerCase());
     if (dup && !(await confirmDialog(`Ya existe ${dup.name} (${dup.id}) con ese nombre o teléfono. ¿Crear de todos modos?`, "Crear"))) return;
-    const btn = $("button:last-of-type", f); setBusy(btn, true, "Creando…");
+    const btn = $("[data-submit]", f); setBusy(btn, true, "Creando…");
     try {
       const m = await createMember(data);
       d.close();
@@ -364,7 +442,7 @@ const SECTIONS = {
       <div class="grid2 mt">
         <div class="card reveal"><h3 class="h3">En riesgo (sin venir 10+ días)</h3>
           ${risk.length ? `<div class="list">${risk.slice(0, 8).map((m) => `<div class="li"><div class="grow"><a href="#/admin/cliente/${m.id}"><b>${esc(m.name)}</b></a><small>${m.lastVisit ? `Última visita ${timeAgo(m.lastVisit)}` : "Sin visitas"}${m.autoBlockDays ? ` · bloqueo a los ${m.autoBlockDays} días` : ""}</small></div>
-            <a class="icon-btn sm" target="_blank" rel="noopener" href="${waLink(m.phone, `¡Hola ${m.name.split(" ")[0]}! Te extrañamos en ${CONFIG.gymName} 💪 ¿Te reservo tu próxima clase?`)}" title="WhatsApp">${icon("whatsapp")}</a></div>`).join("")}</div>` : `<p class="muted">Todos vienen constante 🔥</p>`}</div>
+            <a class="icon-btn sm" target="_blank" rel="noopener" href="${waLink(m.phone, `¡Hola ${m.name.split(" ")[0]}! Te extrañamos en ${CONFIG.gymName} 💪 ¿Te agendo tu próxima sesión?`)}" title="WhatsApp">${icon("whatsapp")}</a></div>`).join("")}</div>` : `<p class="muted">Todos vienen constante 🔥</p>`}</div>
         <div class="card reveal"><h3 class="h3">Pagos vencidos</h3>
           ${overdue.length ? `<div class="list">${overdue.slice(0, 8).map((m) => `<div class="li"><div class="grow"><a href="#/admin/cliente/${m.id}"><b>${esc(m.name)}</b></a><small>${esc(m.plan || "Plan")} · venció ${fmtDate(m.paidUntil)}</small></div>
             <a class="icon-btn sm" target="_blank" rel="noopener" href="${waLink(m.phone, `Hola ${m.name.split(" ")[0]}, tu ${m.plan || "membresía"} en ${CONFIG.gymName} venció el ${fmtDate(m.paidUntil)}. ¿Te ayudo a renovarla?`)}">${icon("whatsapp")}</a></div>`).join("")}</div>` : `<p class="muted">Sin adeudos</p>`}</div>
@@ -392,7 +470,7 @@ const SECTIONS = {
         <div class="row gap-s"><input type="date" class="inp" data-date value="${S.resDate}">${S.resDate ? `<button class="btn btn-ghost sm" data-clr>Todas</button>` : ""}</div>
       </div>
       <div class="card table-wrap mt reveal"><table class="table">
-        <thead><tr><th>Fecha</th><th>Hora</th><th>Cliente</th><th>Clase</th><th>Objetivo</th><th>Estado</th><th></th></tr></thead>
+        <thead><tr><th>Fecha</th><th>Hora</th><th>Cliente</th><th>Servicio</th><th>Objetivo</th><th>Estado</th><th></th></tr></thead>
         <tbody>${list.map((r) => `<tr>
           <td>${fmtDate(r.date)}</td><td class="mono">${fmtTime(r.time)}</td>
           <td><b>${r.memberId ? `<a href="#/admin/cliente/${r.memberId}">${esc(r.name)}</a>` : esc(r.name)}</b><small class="block muted">${esc(r.phone)}${r.referredBy ? ` · Ref: ${esc(r.referredBy)}` : ""}</small></td>
@@ -473,25 +551,29 @@ const SECTIONS = {
     draw();
   },
 
-  async cliente(el, S, arg) {
-    const [id, tab0] = String(arg || "").split("/");
+  async cliente(el, S, arg, soft = false) {
+    const id = String(arg || "").split("/")[0];
     const tabFromHash = location.hash.split("/")[4];
     const m = S.members.get(id);
     if (!m) { el.innerHTML = `<div class="card center muted">Cliente no encontrado. <a href="#/admin/clientes" class="link">Volver</a></div>`; return; }
-    S.ctab = tabFromHash || S.ctab || "datos";
-    if (S.ctabFor !== id) { S.ctab = tabFromHash || "datos"; S.ctabFor = id; }
     const st = effectiveStatus(m);
-    el.innerHTML = `
-      <div class="client-hero card reveal">
+    const age = ageOf(m);
+    const hero = `
         <a href="#/admin/clientes" class="icon-btn sm">${icon("back")}</a>
         <div class="avatar lg">${m.avatar ? `<img src="${m.avatar}" alt="">` : esc(m.name[0])}</div>
-        <div class="grow"><h2>${esc(m.name)}</h2><p class="muted"><span class="mono">${esc(m.id)}</span> · ${esc(m.phone)} · ${m.visits || 0} visitas · ${m.uid ? "Cuenta activa" : "Sin contraseña aún"}</p></div>
-        ${statusChip(st)}
-      </div>
-      <div class="seg scroll mt">${[["datos", "Datos"], ["progreso", "Progreso"], ["rutina", "Rutina"], ["dieta", "Dieta"], ["pagos", "Pagos"], ["asistencias", "Asistencias"]].map(([k, l]) => `<button data-ct="${k}" class="${S.ctab === k ? "on" : ""}">${l}</button>`).join("")}</div>
+        <div class="grow"><h2>${esc(m.name)}</h2><p class="muted"><span class="mono">${esc(m.id)}</span> · ${esc(m.phone)}${age != null ? ` · ${age} años` : ""}${m.sex ? ` · ${m.sex === "F" ? "Mujer" : "Hombre"}` : ""}${m.height ? ` · ${m.height} cm` : ""}${m.goal ? ` · ${esc(m.goal)}` : ""}</p>
+          <p class="muted small">${esc(m.service || "")}${m.service ? " · " : ""}${m.visits || 0} visitas · ${m.uid ? "Cuenta activa" : "Sin contraseña aún"}</p></div>
+        ${statusChip(st)}`;
+    // En actualizaciones automáticas solo se refresca el encabezado para no borrar lo que el coach está capturando
+    if (soft && S.ctabFor === id && $("[data-ctab]", el)) { $(".client-hero", el).innerHTML = hero; return; }
+    S.ctab = tabFromHash || S.ctab || "datos";
+    if (S.ctabFor !== id) { S.ctab = tabFromHash || "datos"; S.ctabFor = id; }
+    el.innerHTML = `
+      <div class="client-hero card reveal">${hero}</div>
+      <div class="seg scroll mt">${[["datos", "Ficha"], ["progreso", "Progreso"], ["rutina", "Rutina"], ["dieta", "Dieta"], ["pagos", "Pagos"], ["asistencias", "Asistencias"]].map(([k, l]) => `<button data-ct="${k}" class="${S.ctab === k ? "on" : ""}">${l}</button>`).join("")}</div>
       <div data-ctab class="mt"></div>`;
     $$("[data-ct]", el).forEach((b) => (b.onclick = () => { S.ctab = b.dataset.ct; history.replaceState(null, "", `#/admin/cliente/${id}/${S.ctab}`); $$("[data-ct]", el).forEach((x) => x.classList.toggle("on", x === b)); drawTab(); }));
-    const drawTab = async () => { const c = $("[data-ctab]", el); c.innerHTML = `<div class="center pad"><span class="spinner"></span></div>`; await CTABS[S.ctab](c, S, m); enhance(c); };
+    const drawTab = async () => { const c = $("[data-ctab]", el); c.innerHTML = `<div class="center pad"><span class="spinner"></span></div>`; await CTABS[S.ctab](c, S, S.members.get(id) || m); enhance(c); };
     drawTab();
   },
 
@@ -578,7 +660,7 @@ const SECTIONS = {
       </div>
       <div class="card mt reveal"><h3 class="h3">Ingresos por día</h3>${barChart(byDay)}</div>
       <div class="grid2 mt">
-        <div class="card reveal"><h3 class="h3">Reservas por clase</h3>${hbars(byClass)}</div>
+        <div class="card reveal"><h3 class="h3">Reservas por servicio</h3>${hbars(byClass)}</div>
         <div class="card reveal"><h3 class="h3">Horarios más solicitados</h3>${barChart(byHour, { height: 140 })}</div>
         <div class="card reveal"><h3 class="h3">Ingresos por método</h3>${hbars(Object.entries(byMethod).map(([k, v]) => ({ label: k, v, fmt: money(v) })))}</div>
         <div class="card reveal"><h3 class="h3">Clientes más constantes</h3><div class="list">${top.map((m, i) => `<div class="li"><b class="mono">${i + 1}</b><a class="grow" href="#/admin/cliente/${m.id}">${esc(m.name)}</a><b>${m.visits || 0}</b></div>`).join("") || `<p class="muted">Sin datos</p>`}</div></div>
@@ -673,13 +755,13 @@ const SECTIONS = {
           <div class="field"><span>Días cerrados</span><div class="days-pick">${DAYS.map((d, i) => `<label class="check"><input type="checkbox" name="cd" value="${i}" ${C.closedDays.includes(i) ? "checked" : ""}><span></span>${d.slice(0, 3)}</label>`).join("")}</div></div>
           <label class="field"><span>Bloqueo automático por defecto para nuevos clientes (días, 0 = nunca)</span><input class="inp" type="number" min="0" name="autoBlockDefault" value="${esc(C.autoBlockDefault)}"></label>
         </div>
-        <div class="card reveal"><h3 class="h3">Clases y cupo</h3><div data-classes></div><button type="button" class="btn btn-ghost sm" data-add-class>${icon("plus")} Agregar clase</button></div>
+        <div class="card reveal"><h3 class="h3">Servicios y cupo</h3><div data-classes></div><button type="button" class="btn btn-ghost sm" data-add-class>${icon("plus")} Agregar servicio</button></div>
         <div class="card reveal"><h3 class="h3">Planes y precios</h3><div data-plans></div><button type="button" class="btn btn-ghost sm" data-add-plan>${icon("plus")} Agregar plan</button></div>
       </div>
       <div class="save-bar"><button type="button" class="btn btn-ghost" data-pw>${icon("lock")} Cambiar contraseña admin</button><button class="btn btn-metal lg">${icon("check")} Guardar cambios</button></div>
     </form>`;
     const f = $("[data-f]", el);
-    const rowsCls = () => { $("[data-classes]", el).innerHTML = C.classes.map((c, i) => `<div class="row gap-s mb-s"><input class="inp grow" data-cn="${i}" value="${esc(c.name)}" placeholder="Clase"><input class="inp" style="width:90px" type="number" min="1" data-cc="${i}" value="${c.capacity}" title="Cupo"><button type="button" class="icon-btn sm danger" data-cd="${i}">${icon("trash")}</button></div>`).join("");
+    const rowsCls = () => { $("[data-classes]", el).innerHTML = C.classes.map((c, i) => `<div class="row gap-s mb-s"><input class="inp grow" data-cn="${i}" value="${esc(c.name)}" placeholder="Servicio"><input class="inp" style="width:90px" type="number" min="1" data-cc="${i}" value="${c.capacity}" title="Cupo"><button type="button" class="icon-btn sm danger" data-cd="${i}">${icon("trash")}</button></div>`).join("");
       $$("[data-cd]", el).forEach((b) => (b.onclick = () => { sync(); C.classes.splice(+b.dataset.cd, 1); rowsCls(); })); };
     const rowsPlans = () => { $("[data-plans]", el).innerHTML = C.plans.map((p, i) => `<div class="row gap-s mb-s"><input class="inp grow" data-pn="${i}" value="${esc(p.name)}" placeholder="Plan"><input class="inp" style="width:90px" type="number" min="0" data-pp="${i}" value="${p.price}" title="Precio"><input class="inp" style="width:80px" type="number" min="0" data-pd="${i}" value="${p.days ?? 30}" title="Días de vigencia"><button type="button" class="icon-btn sm danger" data-pdel="${i}">${icon("trash")}</button></div>`).join("") + `<p class="muted small">Nombre · precio · días de vigencia</p>`;
       $$("[data-pdel]", el).forEach((b) => (b.onclick = () => { sync(); C.plans.splice(+b.dataset.pdel, 1); rowsPlans(); })); };
@@ -688,7 +770,7 @@ const SECTIONS = {
       C.plans = C.plans.map((p, i) => ({ name: $(`[data-pn="${i}"]`, el)?.value.trim() || p.name, price: Number($(`[data-pp="${i}"]`, el)?.value) || 0, days: Number($(`[data-pd="${i}"]`, el)?.value) || 0 }));
     };
     rowsCls(); rowsPlans();
-    $("[data-add-class]", el).onclick = () => { sync(); C.classes.push({ name: "Nueva clase", capacity: 10 }); rowsCls(); };
+    $("[data-add-class]", el).onclick = () => { sync(); C.classes.push({ name: "Nuevo servicio", capacity: 5 }); rowsCls(); };
     $("[data-add-plan]", el).onclick = () => { sync(); C.plans.push({ name: "Nuevo plan", price: 0, days: 30 }); rowsPlans(); };
     $$("[data-preset]", el).forEach((b) => (b.onclick = () => { const [bg, s, a, t] = JSON.parse(b.dataset.preset); f.c_bg.value = bg; f.c_surface.value = s; f.c_accent.value = a; f.c_text.value = t; preview(); }));
     const preview = () => { const r = document.documentElement.style; r.setProperty("--bg", f.c_bg.value); r.setProperty("--surface", f.c_surface.value); r.setProperty("--accent", f.c_accent.value); r.setProperty("--text", f.c_text.value); };
@@ -706,7 +788,7 @@ const SECTIONS = {
         links: Object.fromEntries(["instagram", "tiktok", "youtube", "facebook"].map((k) => [k, f[`l_${k}`].value.trim()])),
         colors: { bg: f.c_bg.value, surface: f.c_surface.value, accent: f.c_accent.value, text: f.c_text.value },
         hours, closedDays: $$("input[name=cd]:checked", f).map((i) => Number(i.value)),
-        classes: C.classes.filter((c) => c.name), plans: C.plans.filter((p) => p.name), autoBlockDefault: Number(f.autoBlockDefault.value) || 0,
+        classes: C.classes.filter((c) => c.name), plans: C.plans.filter((p) => p.name), autoBlockDefault: Number(f.autoBlockDefault.value) || 0, servicesVersion: 2,
         updatedAt: serverTimestamp(),
       };
       const btn = $(".save-bar .btn-metal", f); setBusy(btn, true, "Guardando…");
@@ -721,13 +803,13 @@ const SECTIONS = {
 const CTABS = {
   async datos(c, S, m) {
     const st = effectiveStatus(m);
-    c.innerHTML = `<div class="grid2">
-      <form class="card form reveal" data-f><h3 class="h3">Datos del cliente</h3>${memberForm(m)}
-        <button class="btn btn-metal w100">${icon("check")} Guardar</button></form>
+    c.innerHTML = `<div class="grid-side">
+      <form class="card form reveal" data-f><h3 class="h3">Ficha del cliente</h3>${memberForm(m)}
+        <button type="submit" class="btn btn-metal w100 lg" data-submit>${icon("check")} Guardar ficha</button></form>
       <div class="stack">
         <div class="card reveal"><h3 class="h3">Estado de la cuenta</h3>
           <p class="muted small">${m.statusReason ? esc(m.statusReason) + " · " : ""}${m.lastVisit ? `Última visita ${timeAgo(m.lastVisit)}` : ""}</p>
-          <div class="seg mt-s">${["activo", "inactivo", "bloqueado"].map((s) => `<button data-st="${s}" class="${st === s ? "on" : ""}">${s[0].toUpperCase() + s.slice(1)}</button>`).join("")}</div>
+          <div class="seg mt-s">${["activo", "inactivo", "bloqueado"].map((s) => `<button type="button" data-st="${s}" class="${st === s ? "on" : ""}">${s[0].toUpperCase() + s.slice(1)}</button>`).join("")}</div>
           <button class="btn btn-ghost w100 mt" data-att>${icon("check")} Dar asistencia ahora</button></div>
         <div class="card reveal"><h3 class="h3">Acceso a la app</h3>
           <p class="muted small">${m.uid ? "El cliente ya creó su contraseña." : "Aún no crea su contraseña."}</p>
@@ -742,15 +824,24 @@ const CTABS = {
       e.preventDefault();
       const d = readMemberForm(f);
       if (d.name.length < 3 || d.phone.length < 10) return toast("Nombre y celular son obligatorios", "err");
-      await updateDoc(doc(db, "members", m.id), d); toast("Datos guardados");
+      const btn = $("[data-submit]", f); setBusy(btn, true, "Guardando…");
+      try { await updateDoc(doc(db, "members", m.id), d); toast("Ficha guardada"); }
+      catch (err) { console.error(err); toast("No se pudo guardar", "err"); }
+      setBusy(btn, false);
     };
+    // El estado se lee al momento (la ficha no se redibuja en actualizaciones automáticas)
+    const liveStatus = () => effectiveStatus(S.members.get(m.id) || m);
+    const markSeg = (s) => $$("[data-st]", c).forEach((x) => x.classList.toggle("on", x.dataset.st === s));
     $$("[data-st]", c).forEach((b) => (b.onclick = async () => {
       const s = b.dataset.st;
-      if (s === st) return;
+      if (s === liveStatus()) return;
       if (!(await confirmDialog(s === "activo" ? `¿Reactivar a ${m.name}?` : `¿Marcar a ${m.name} como ${s}? No podrá entrar a la app.`, "Confirmar"))) return;
-      await setStatus(m, s, s === "activo" ? "" : "Manual por el coach"); toast("Estado actualizado");
+      await setStatus(m, s, s === "activo" ? "" : "Manual por el coach"); markSeg(s); toast("Estado actualizado");
     }));
-    $("[data-att]", c).onclick = async () => { if (st !== "activo") await setStatus(m, "activo"); await registerAttendance(m); toast("Asistencia registrada"); };
+    $("[data-att]", c).onclick = async () => {
+      if (liveStatus() !== "activo") { await setStatus(m, "activo"); markSeg("activo"); }
+      await registerAttendance(m); toast("Asistencia registrada");
+    };
     $("[data-reset]", c).onclick = async () => {
       if (!(await confirmDialog(`¿Restablecer el acceso de ${m.name}? Deberá crear una nueva contraseña con su mismo ID.`, "Restablecer"))) return;
       await resetAccess(m);
@@ -767,47 +858,65 @@ const CTABS = {
   async progreso(c, S, m) {
     const [prog, photosSnap] = await Promise.all([loadProgress(m.id), getDocs(collection(db, "members", m.id, "photos"))]);
     const photos = photosSnap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => b.date.localeCompare(a.date));
-    const F = [["weight", "Peso (kg)"], ["fat", "% Grasa"], ["waist", "Cintura (cm)"], ["chest", "Pecho (cm)"], ["arm", "Brazo (cm)"], ["leg", "Pierna (cm)"]];
-    c.innerHTML = `<div class="grid2">
-      <form class="card form reveal" data-f><h3 class="h3">Registrar medidas</h3>
+    c.innerHTML = `
+    ${summaryHTML(m, prog)}
+    <div class="grid-side mt">
+      <form class="card form reveal" data-f novalidate>
+        <div class="row between"><h3 class="h3" data-ftitle>Nuevo registro</h3><button type="button" class="btn btn-text sm" data-cancel hidden>Cancelar edición</button></div>
         <label class="field"><span>Fecha</span><input class="inp" type="date" name="date" value="${ymd()}"></label>
-        <div class="grid3">${F.map(([k, l]) => `<label class="field"><span>${l}</span><input class="inp" type="number" step="0.1" name="${k}"></label>`).join("")}</div>
-        <label class="field"><span>Notas</span><input class="inp" name="note" placeholder="Observaciones"></label>
-        <input type="hidden" name="editId"><button class="btn btn-metal w100">${icon("plus")} Guardar registro</button></form>
-      <div class="card reveal"><div class="row between"><h3 class="h3">Peso</h3><span class="muted small">Objetivo: ${m.goalWeight ? m.goalWeight + " kg" : "—"}</span></div>
-        ${lineChart(prog.filter((p) => p.weight).map((p) => ({ label: fmtDate(p.date).slice(0, 6), v: +p.weight })), { goal: m.goalWeight ? +m.goalWeight : null, unit: " kg" })}</div>
+        ${progressFormHTML()}
+        <label class="field"><span>Notas / observaciones</span><textarea class="inp" name="note" rows="2" placeholder="Cambios en la dieta, molestias, logros…"></textarea></label>
+        <input type="hidden" name="editId"><button type="submit" class="btn btn-metal w100 lg" data-submit>${icon("plus")} Guardar registro</button></form>
+      <div class="stack">
+        <div class="card reveal"><h3 class="h3">Evolución</h3>${chartBlockHTML()}</div>
+        <div class="card reveal"><h3 class="h3">Inicial vs actual</h3>${comparisonHTML(m, prog)}</div>
+        <div class="card reveal"><h3 class="h3">Ficha rápida</h3>${profileFactsHTML(m)}<a class="link small" href="#/admin/cliente/${m.id}/datos">Editar ficha</a></div>
+      </div>
     </div>
-    <div class="card table-wrap mt reveal"><table class="table"><thead><tr><th>Fecha</th>${F.map(([, l]) => `<th>${l}</th>`).join("")}<th>Notas</th><th></th></tr></thead>
-      <tbody>${prog.slice().reverse().map((p) => `<tr><td>${fmtDate(p.date)}</td>${F.map(([k]) => `<td>${p[k] ?? "—"}</td>`).join("")}<td class="muted small">${esc(p.note || "")}</td>
-        <td class="actions"><button class="icon-btn sm" data-ed="${p.id}">${icon("edit")}</button><button class="icon-btn sm danger" data-dp="${p.id}">${icon("trash")}</button></td></tr>`).join("") || `<tr><td colspan="9" class="center muted pad">Sin registros</td></tr>`}</tbody></table></div>
+    <div class="card mt reveal"><h3 class="h3">Historial completo</h3>${historyHTML(m, prog, { actions: true })}</div>
     <div class="card mt reveal"><div class="row between wrap gap"><h3 class="h3">Fotos de progreso</h3>
       <div class="row gap-s"><select class="inp" data-pl><option>Frente</option><option>Lateral</option><option>Espalda</option><option>Otra</option></select>
       <label class="btn btn-metal">${icon("camera")} Subir fotos<input type="file" accept="image/*" multiple data-up hidden></label></div></div>
+      ${beforeAfterHTML(photos)}
       <div class="photos mt">${photos.map((p) => `<figure class="photo"><img src="${p.data}" alt="" loading="lazy"><figcaption>${fmtDate(p.date)} · ${esc(p.label || "")}</figcaption><button class="icon-btn sm danger ph-del" data-dph="${p.id}">${icon("trash")}</button></figure>`).join("") || `<p class="muted">Sin fotos</p>`}</div></div>`;
+    bindChart(c, m, prog);
     const f = $("[data-f]", c);
-    const reload = () => CTABS.progreso(c, S, m).then(() => enhance(c));
+    const reload = () => CTABS.progreso(c, S, S.members.get(m.id) || m).then(() => enhance(c));
     f.onsubmit = async (e) => {
       e.preventDefault();
-      const data = { date: f.date.value || ymd(), note: f.note.value.trim() };
-      F.forEach(([k]) => (data[k] = f[k].value ? Number(f[k].value) : null));
-      if (!F.some(([k]) => data[k] != null)) return toast("Captura al menos una medida", "err");
-      if (f.editId.value) await setDoc(doc(db, "members", m.id, "progress", f.editId.value), data);
-      else { await addDoc(collection(db, "members", m.id, "progress"), data); notify(m.id, "Nuevo registro de progreso", `Tu coach actualizó tus medidas${data.weight ? ` · ${data.weight} kg` : ""}`, "progreso"); }
-      toast("Progreso guardado"); reload();
+      const data = { date: f.date.value || ymd(), note: f.note.value.trim(), ...readProgressForm(f) };
+      if (!METRIC_FIELDS.some(([k]) => data[k] != null) && !data.note) return toast("Captura al menos un dato", "err");
+      if (m.height) data.height = m.height;
+      const btn = $("[data-submit]", f); setBusy(btn, true, "Guardando…");
+      try {
+        if (f.editId.value) await updateDoc(doc(db, "members", m.id, "progress", f.editId.value), data);
+        else {
+          await addDoc(collection(db, "members", m.id, "progress"), { ...data, by: "coach", at: serverTimestamp() });
+          const imc = bmi(data.weight, m.height);
+          notify(m.id, "Nuevo registro de progreso", `Tu coach actualizó tu progreso${data.weight ? ` · ${data.weight} kg` : ""}${imc ? ` · IMC ${imc}` : ""}`, "progreso");
+        }
+        toast("Progreso guardado"); reload();
+      } catch (err) { console.error(err); setBusy(btn, false); toast("No se pudo guardar", "err"); }
     };
+    $("[data-cancel]", c).onclick = () => reload();
     $$("[data-ed]", c).forEach((b) => (b.onclick = () => {
       const p = prog.find((x) => x.id === b.dataset.ed);
       f.date.value = p.date; f.note.value = p.note || ""; f.editId.value = p.id;
-      F.forEach(([k]) => (f[k].value = p[k] ?? ""));
+      METRIC_FIELDS.forEach(([k]) => f[k] && (f[k].value = p[k] ?? ""));
+      $$("details.fgroup", f).forEach((d) => (d.open = true));
+      $("[data-ftitle]", c).textContent = `Editando ${fmtDate(p.date)}`; $("[data-cancel]", c).hidden = false;
       f.scrollIntoView({ behavior: "smooth" });
     }));
     $$("[data-dp]", c).forEach((b) => (b.onclick = async () => { if (await confirmDialog("¿Eliminar este registro?", "Eliminar")) { await deleteDoc(doc(db, "members", m.id, "progress", b.dataset.dp)); reload(); } }));
     $$("[data-dph]", c).forEach((b) => (b.onclick = async () => { if (await confirmDialog("¿Eliminar esta foto?", "Eliminar")) { await deleteDoc(doc(db, "members", m.id, "photos", b.dataset.dph)); reload(); } }));
+    $$(".photo img, .ba img", c).forEach((img) => (img.onclick = () => modal(`<img class="photo-full" src="${img.src}" alt="">`, { wide: true })));
     $("[data-up]", c).onchange = async (e) => {
       const files = [...e.target.files]; if (!files.length) return;
       toast(`Subiendo ${files.length} foto(s)…`, "info");
-      for (const file of files) await addDoc(collection(db, "members", m.id, "photos"), { data: await compressImage(file, 900, 0.75), date: ymd(), label: $("[data-pl]", c).value, at: serverTimestamp() });
-      notify(m.id, "Nuevas fotos de progreso", "Tu coach subió fotos de tu avance 📸", "progreso");
+      try {
+        for (const file of files) await addDoc(collection(db, "members", m.id, "photos"), { data: await compressImage(file, 900, 0.75), date: ymd(), label: $("[data-pl]", c).value, at: serverTimestamp() });
+        notify(m.id, "Nuevas fotos de progreso", "Tu coach subió fotos de tu avance 📸", "progreso");
+      } catch (err) { console.error(err); toast("No se pudo subir una foto", "err"); }
       reload();
     };
   },
@@ -816,17 +925,29 @@ const CTABS = {
     const d = (await getDoc(doc(db, "members", m.id, "plan", "routine"))).data() || { days: {}, notes: "" };
     const tpls = (await getDocs(query(collection(db, "templates"), where("kind", "==", "routine")))).docs.map((x) => ({ id: x.id, ...x.data() }));
     c.innerHTML = `<form class="card form reveal" data-f>
-      <div class="row between wrap gap"><h3 class="h3">Rutina semanal</h3>
-        <div class="row gap-s">${tpls.length ? `<select class="inp" data-tpl><option value="">Cargar plantilla…</option>${tpls.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("")}</select>` : ""}
-        <button type="button" class="btn btn-ghost sm" data-save-tpl>Guardar como plantilla</button></div></div>
+      <div class="row between wrap gap"><h3 class="h3">Rutina semanal</h3>${planToolbar(tpls)}</div>
       <p class="muted small">Un ejercicio por línea. Ej: <span class="mono">Sentadilla 4x12 — 60kg</span>. Deja vacío el día de descanso.</p>
-      <div class="grid2">${DAYS_ORDER.map((k) => `<label class="field"><span>${DAY_LABEL[k]}</span><textarea class="inp" rows="5" name="${k}">${esc(d.days?.[k] || "")}</textarea></label>`).join("")}
-        <label class="field"><span>Notas generales</span><textarea class="inp" rows="5" name="notes">${esc(d.notes || "")}</textarea></label></div>
-      <button class="btn btn-metal w100 lg">${icon("check")} Guardar y notificar</button></form>`;
+      <div class="grid2">${DAYS_ORDER.map((k) => `<label class="field"><span>${DAY_LABEL[k]}</span><textarea class="inp" rows="6" name="${k}">${esc(d.days?.[k] || "")}</textarea></label>`).join("")}
+        <label class="field"><span>Notas generales</span><textarea class="inp" rows="6" name="notes">${esc(d.notes || "")}</textarea></label></div>
+      <button type="submit" class="btn btn-metal w100 lg" data-submit>${icon("check")} Guardar y notificar</button></form>`;
     const f = $("[data-f]", c);
     const read = () => ({ days: Object.fromEntries(DAYS_ORDER.map((k) => [k, f[k].value])), notes: f.notes.value });
     $("[data-tpl]", c)?.addEventListener("change", (e) => { const t = tpls.find((x) => x.id === e.target.value); if (!t) return; DAYS_ORDER.forEach((k) => (f[k].value = t.data.days?.[k] || "")); f.notes.value = t.data.notes || ""; });
     $("[data-save-tpl]", c).onclick = () => saveTemplate("routine", read());
+    bindPlanToolbar(c, "routine", read, m, (text, dest, mode) => {
+      const put = (name, val) => { f[name].value = mode === "append" && f[name].value.trim() ? `${f[name].value.trim()}\n${val}` : val; };
+      if (dest === "auto") {
+        const r = parseRoutine(text);
+        if (!r.found) { put("notes", text); return "No se encontraron días (Lunes, Martes, Día 1…); el texto se puso en Notas."; }
+        // Reemplazar = la rutina queda exactamente como el archivo (los días que no vienen quedan en descanso)
+        if (mode === "replace") { DAYS_ORDER.forEach((k) => (f[k].value = "")); f.notes.value = ""; }
+        Object.entries(r.days).forEach(([k, v]) => put(k, v));
+        if (r.notes) put("notes", r.notes);
+        return `Se repartió en ${Object.keys(r.days).length} día(s).`;
+      }
+      put(dest, text);
+      return `Texto pegado en ${dest === "notes" ? "Notas" : DAY_LABEL[dest]}.`;
+    });
     f.onsubmit = async (e) => {
       e.preventDefault();
       await setDoc(doc(db, "members", m.id, "plan", "routine"), { ...read(), updatedAt: serverTimestamp() });
@@ -837,21 +958,22 @@ const CTABS = {
   async dieta(c, S, m) {
     const d = (await getDoc(doc(db, "members", m.id, "plan", "diet"))).data() || { meals: [{ name: "Desayuno", text: "" }, { name: "Colación", text: "" }, { name: "Comida", text: "" }, { name: "Colación", text: "" }, { name: "Cena", text: "" }] };
     const tpls = (await getDocs(query(collection(db, "templates"), where("kind", "==", "diet")))).docs.map((x) => ({ id: x.id, ...x.data() }));
-    let meals = d.meals.slice();
+    let meals = (d.meals || []).slice();
+    const w = (await loadProgress(m.id)).filter((p) => p.weight).at(-1)?.weight || m.initWeight;
+    const T = tdee(m, w);
     c.innerHTML = `<form class="card form reveal" data-f>
-      <div class="row between wrap gap"><h3 class="h3">Plan de alimentación</h3>
-        <div class="row gap-s">${tpls.length ? `<select class="inp" data-tpl><option value="">Cargar plantilla…</option>${tpls.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("")}</select>` : ""}
-        <button type="button" class="btn btn-ghost sm" data-save-tpl>Guardar como plantilla</button></div></div>
-      <div class="grid2"><label class="field"><span>Calorías diarias</span><input class="inp" name="calories" value="${esc(d.calories || "")}" placeholder="2,100 kcal"></label>
+      <div class="row between wrap gap"><h3 class="h3">Plan de alimentación</h3>${planToolbar(tpls)}</div>
+      ${T ? `<p class="muted small">Referencia: TMB ${bmr(m, w)} kcal · GET ${T} kcal (${esc(m.goal || "sin objetivo")}). Déficit sugerido −15–20 % · superávit +10 %.</p>` : ""}
+      <div class="grid2"><label class="field"><span>Calorías diarias</span><input class="inp" name="calories" value="${esc(d.calories || "")}" placeholder="${T ? T + " kcal" : "2,100 kcal"}"></label>
         <label class="field"><span>Macros</span><input class="inp" name="macros" value="${esc(d.macros || "")}" placeholder="P 160g · C 200g · G 60g"></label></div>
       <div data-meals></div><button type="button" class="btn btn-ghost sm" data-add>${icon("plus")} Agregar comida</button>
       <label class="field mt"><span>Indicaciones</span><textarea class="inp" rows="3" name="notes">${esc(d.notes || "")}</textarea></label>
-      <button class="btn btn-metal w100 lg">${icon("check")} Guardar y notificar</button></form>`;
+      <button type="submit" class="btn btn-metal w100 lg" data-submit>${icon("check")} Guardar y notificar</button></form>`;
     const f = $("[data-f]", c);
     const sync = () => { meals = meals.map((x, i) => ({ name: $(`[data-mn="${i}"]`, c)?.value ?? x.name, text: $(`[data-mt="${i}"]`, c)?.value ?? x.text })); };
     const draw = () => {
       $("[data-meals]", c).innerHTML = meals.map((x, i) => `<div class="meal-edit"><div class="row gap-s"><input class="inp grow" data-mn="${i}" value="${esc(x.name)}"><button type="button" class="icon-btn sm danger" data-rm="${i}">${icon("trash")}</button></div>
-        <textarea class="inp" rows="3" data-mt="${i}" placeholder="Alimentos y porciones">${esc(x.text)}</textarea></div>`).join("");
+        <textarea class="inp" rows="4" data-mt="${i}" placeholder="Alimentos y porciones">${esc(x.text)}</textarea></div>`).join("");
       $$("[data-rm]", c).forEach((b) => (b.onclick = () => { sync(); meals.splice(+b.dataset.rm, 1); draw(); }));
     };
     draw();
@@ -859,6 +981,24 @@ const CTABS = {
     $("[data-add]", c).onclick = () => { sync(); meals.push({ name: "Comida", text: "" }); draw(); };
     $("[data-tpl]", c)?.addEventListener("change", (e) => { const t = tpls.find((x) => x.id === e.target.value); if (!t) return; meals = t.data.meals.slice(); f.calories.value = t.data.calories || ""; f.macros.value = t.data.macros || ""; f.notes.value = t.data.notes || ""; draw(); });
     $("[data-save-tpl]", c).onclick = () => saveTemplate("diet", read());
+    bindPlanToolbar(c, "diet", read, m, (text, dest, mode) => {
+      sync();
+      const putNotes = (v) => { f.notes.value = mode === "append" && f.notes.value.trim() ? `${f.notes.value.trim()}\n${v}` : v; };
+      if (dest === "auto") {
+        const r = parseDiet(text);
+        if (!r.found) { putNotes(text); return "No se encontraron comidas (Desayuno, Comida, Cena…); el texto se puso en Indicaciones."; }
+        meals = mode === "append" ? [...meals.filter((x) => x.text.trim()), ...r.meals] : r.meals;
+        if (mode === "replace") f.notes.value = "";
+        if (r.calories) f.calories.value = r.calories;
+        if (r.macros) f.macros.value = r.macros;
+        if (r.notes) putNotes(r.notes);
+        draw();
+        return `Se separó en ${r.meals.length} comida(s).`;
+      }
+      if (dest === "notes") { putNotes(text); return "Texto pegado en Indicaciones."; }
+      meals.push({ name: "Plan importado", text }); draw();
+      return "Se agregó como una comida nueva.";
+    });
     f.onsubmit = async (e) => {
       e.preventDefault();
       await setDoc(doc(db, "members", m.id, "plan", "diet"), { ...read(), updatedAt: serverTimestamp() });
@@ -885,6 +1025,78 @@ const CTABS = {
       <div class="card reveal"><h3 class="h3">Historial (${list.length})</h3><div class="list scroll-y">${list.slice(0, 100).map((a) => `<div class="li"><span class="grow">${fmtDate(a.date)}</span><small class="muted">${esc(a.note || "")}</small></div>`).join("") || `<p class="muted">Sin asistencias</p>`}</div></div></div>`;
   },
 };
+
+/* ---------- Importar / exportar rutina y dieta ---------- */
+function planToolbar(tpls) {
+  return `<div class="row gap-s wrap plan-tools">
+    ${tpls.length ? `<select class="inp sm-inp" data-tpl><option value="">Cargar plantilla…</option>${tpls.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("")}</select>` : ""}
+    <button type="button" class="btn btn-ghost sm" data-save-tpl>Guardar plantilla</button>
+    <button type="button" class="btn btn-ghost sm" data-import>${icon("download", "rot180")} Importar archivo</button>
+    <div class="menu-wrap"><button type="button" class="btn btn-metal sm" data-export>${icon("download")} Exportar</button>
+      <div class="menu" data-menu hidden>
+        <button type="button" data-fmt="pdf">PDF</button><button type="button" data-fmt="xlsx">Excel (.xlsx)</button>
+        <button type="button" data-fmt="csv">CSV</button><button type="button" data-fmt="txt">Texto (.txt)</button>
+        <button type="button" data-fmt="copy">Copiar texto</button><button type="button" data-fmt="whatsapp">Enviar por WhatsApp</button>
+      </div></div>
+  </div>`;
+}
+
+function bindPlanToolbar(c, kind, read, m, apply) {
+  const menu = $("[data-menu]", c);
+  $("[data-export]", c).onclick = (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; };
+  const close = (e) => {
+    if (!menu.isConnected) return document.removeEventListener("click", close);
+    if (!e.target.closest(".menu-wrap")) menu.hidden = true;
+  };
+  document.addEventListener("click", close);
+  $$("[data-fmt]", c).forEach((b) => (b.onclick = async () => {
+    menu.hidden = true;
+    const fmt = b.dataset.fmt;
+    toast(fmt === "copy" ? "Copiando…" : "Generando archivo…", "info");
+    const r = await exportPlan(fmt, kind, read(), m);
+    if (fmt === "whatsapp" && r) window.open(waLink(m.phone, r), "_blank");
+  }));
+  $("[data-import]", c).onclick = () => importDialog(kind, apply);
+}
+
+function importDialog(kind, apply) {
+  const isR = kind === "routine";
+  const d = modal(`<h3 class="h3">Importar ${isR ? "rutina" : "dieta"}</h3>
+    <p class="muted small">Sube un PDF, Excel, CSV, Word (.docx), texto o una foto. Se convierte a texto, lo revisas y se acomoda en ${isR ? "la rutina" : "la dieta"}.</p>
+    <label class="dropzone" data-drop><input type="file" accept="${IMPORT_ACCEPT}" data-file hidden>
+      ${icon("download", "rot180")}<b>Elegir o arrastrar archivo</b><small>PDF · XLSX · CSV · DOCX · TXT · imagen</small></label>
+    <p class="small muted" data-status></p>
+    <label class="field"><span>Texto (puedes editarlo o pegarlo aquí)</span><textarea class="inp mono-sm" rows="10" data-text placeholder="${isR ? "Lunes\nSentadilla 4x12\nPrensa 3x15\n\nMartes\n…" : "Desayuno\n2 huevos + 1 tortilla\n\nComida\n150 g pollo + arroz…"}"></textarea></label>
+    <div class="grid2">
+      <label class="field"><span>¿Dónde colocarlo?</span><select class="inp" data-dest>
+        <option value="auto">${isR ? "Repartir automáticamente por días" : "Separar automáticamente por comidas"}</option>
+        ${isR ? DAYS_ORDER.map((k) => `<option value="${k}">Solo en ${DAY_LABEL[k]}</option>`).join("") : `<option value="meal">Como una comida nueva</option>`}
+        <option value="notes">En ${isR ? "Notas generales" : "Indicaciones"}</option></select></label>
+      <label class="field"><span>Modo</span><select class="inp" data-mode><option value="replace">Reemplazar lo que haya</option><option value="append">Agregar al final</option></select></label>
+    </div>
+    <button type="button" class="btn btn-metal w100 lg mt" data-apply>${icon("check")} Colocar en ${isR ? "la rutina" : "la dieta"}</button>
+    <p class="muted small center mt-s">Después revisa y presiona «Guardar y notificar».</p>`, { wide: true });
+  const st = $("[data-status]", d.el), ta = $("[data-text]", d.el), drop = $("[data-drop]", d.el);
+  const handle = async (file) => {
+    if (!file) return;
+    st.innerHTML = `<span class="spinner"></span> Leyendo ${esc(file.name)}…`;
+    try {
+      const text = await fileToText(file, (msg) => (st.innerHTML = `<span class="spinner"></span> ${esc(msg)}`));
+      ta.value = text.replace(/\n{3,}/g, "\n\n").trim();
+      st.textContent = `✓ ${file.name} convertido (${ta.value.split("\n").filter(Boolean).length} renglones). Revisa el texto.`;
+    } catch (err) { console.error(err); st.textContent = "✕ " + (err.message || "No se pudo leer el archivo"); }
+  };
+  $("[data-file]", d.el).onchange = (e) => handle(e.target.files[0]);
+  drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+  drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); handle(e.dataTransfer.files[0]); });
+  $("[data-apply]", d.el).onclick = () => {
+    const text = ta.value.trim();
+    if (!text) return toast("No hay texto para colocar", "err");
+    const msg = apply(text, $("[data-dest]", d.el).value, $("[data-mode]", d.el).value);
+    toast(msg || "Listo"); d.close();
+  };
+}
 
 function pickClient(el, S, tab, text) {
   const all = [...S.members.values()].filter((m) => effectiveStatus(m) === "activo").sort((a, b) => a.name.localeCompare(b.name));

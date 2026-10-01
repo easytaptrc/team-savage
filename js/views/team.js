@@ -57,7 +57,13 @@ export async function render(root, r) {
         await setPersistence(auth, browserLocalPersistence);
         try { await createUserWithEmailAndPassword(auth, email, pw); }
         catch (err) { if (err.code === "auth/email-already-in-use") await signInWithEmailAndPassword(auth, email, pw); else throw err; }
-        await updateDoc(doc(db, "members", id), { uid: auth.currentUser.uid, activatedAt: serverTimestamp() });
+        try { await updateDoc(doc(db, "members", id), { uid: auth.currentUser.uid, activatedAt: serverTimestamp() }); }
+        catch (err) {
+          // Reintento de un registro que se quedó a medias: el ID ya está ligado a esta misma cuenta
+          if (err.code !== "permission-denied") throw err;
+          const own = await getDoc(doc(db, "members", id)).catch(() => null);
+          if (own?.data()?.uid !== auth.currentUser.uid) throw msg("No se pudo activar este ID. Contacta a tu coach.");
+        }
         await updateDoc(doc(db, "logins", id), { claimed: true });
         const m = (await getDoc(doc(db, "members", id))).data();
         notify("admin", "Cuenta activada", `${m?.name || id} creó su contraseña del Team`, "team");
@@ -75,7 +81,7 @@ export async function render(root, r) {
       location.hash = "#/app";
     } catch (err) {
       window.__authBusy = false;
-      if (crear && auth.currentUser) await signOut(auth).catch(() => {});
+      if (auth.currentUser) await signOut(auth).catch(() => {});
       setBusy(btn, false);
       const code = err.code || "";
       toast(err.userMsg || (code.includes("invalid-credential") || code.includes("wrong-password") ? "Contraseña incorrecta"

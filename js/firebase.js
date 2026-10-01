@@ -5,7 +5,7 @@ import {
   onAuthStateChanged, updatePassword, deleteUser, EmailAuthProvider, reauthenticateWithCredential,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
-  initializeFirestore, persistentLocalCache, doc, getDoc, setDoc, updateDoc, addDoc, deleteDoc,
+  initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, getDoc, setDoc, updateDoc, addDoc, deleteDoc,
   collection, query, where, orderBy, limit, getDocs, onSnapshot, serverTimestamp, Timestamp,
   runTransaction, writeBatch, increment,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
@@ -30,7 +30,8 @@ export const ADMIN_USER = "sebas";
 
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = initializeFirestore(app, { localCache: persistentLocalCache() });
+// Caché compartida entre pestañas (el coach puede tener el panel abierto en varias)
+export const db = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
 
 // Analytics solo si el navegador lo soporta
 import("https://www.gstatic.com/firebasejs/10.12.2/firebase-analytics.js")

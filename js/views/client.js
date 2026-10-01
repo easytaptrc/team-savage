@@ -8,14 +8,17 @@ import {
   CONFIG, $, $$, esc, icon, toast, setBusy, effectiveStatus, listenNotifications, notifPanel, notify, lineChart,
   fmtDate, fmtTime, fmtDateTime, timeAgo, passHTML, enhance, downloadPass, confirmDialog, modal, ymd, parseYmd, toDate, money, daysSince,
 } from "../ui.js";
-import { mountReservaForm } from "./reserva.js";
+import { mountReservaForm, slotId } from "./reserva.js";
+import {
+  summaryHTML, chartBlockHTML, bindChart, comparisonHTML, historyHTML, beforeAfterHTML, profileFactsHTML, progressFormHTML, readProgressForm,
+  bmi, bmiCategory, METRIC_FIELDS,
+} from "../metrics.js";
+import { exportPlan, DAYS_ORDER, DAY_LABEL } from "../docs.js";
 
 const TABS = [
   ["inicio", "home", "Inicio"], ["reservar", "calendar", "Reservar"], ["progreso", "chart", "Progreso"],
   ["chat", "chat", "Coach"], ["perfil", "user", "Perfil"],
 ];
-const DAYS_ORDER = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"];
-const DAY_LABEL = { lunes: "Lunes", martes: "Martes", miercoles: "Miércoles", jueves: "Jueves", viernes: "Viernes", sabado: "Sábado", domingo: "Domingo" };
 
 export async function render(root, r) {
   const id = memberIdFromEmail(auth.currentUser.email);
@@ -45,7 +48,11 @@ export async function render(root, r) {
     $("[data-name]", root).textContent = `Hola, ${S.member.name.split(" ")[0]}`;
     $("[data-avatar]", root).innerHTML = S.member.avatar ? `<img src="${S.member.avatar}" alt="">` : esc(S.member.name[0] || "·");
     if (first) { updateDoc(doc(db, "members", id), { lastSeen: serverTimestamp() }).catch(() => {}); show(S.section); }
-  }, (e) => console.warn(e)));
+  }, async (e) => {
+    // Sin permiso = el coach eliminó al socio o restableció su acceso
+    console.warn(e);
+    if (e.code === "permission-denied") { toast("Tu acceso cambió. Vuelve a iniciar sesión o contacta a tu coach.", "err"); await signOut(auth); location.hash = "#/team"; }
+  }));
 
   S.unsubs.push(listenNotifications(id, (list) => {
     S.notifs = list;
@@ -95,12 +102,15 @@ const SECTIONS = {
       </div>
       <div class="banner reveal" data-tilt="6"><div><b>Disciplina hoy</b><b>Resultados siempre</b></div>${icon("flame", "banner-ic")}</div>`;
     const prog = await loadProgress(S.id);
-    const last = prog.at(-1);
-    $("[data-prog]", el).innerHTML = `<div class="row between"><h3 class="h3">Mi progreso</h3><a href="#/app/progreso" class="link small">Ver historial</a></div>
-      <div class="row gap kpis"><div><small>Peso actual</small><b>${last?.weight ? last.weight + " kg" : "—"}</b></div>
+    const ws = prog.filter((p) => p.weight);
+    const last = ws.at(-1), first = ws[0];
+    const imc = bmi(last?.weight, m.height), cat = bmiCategory(imc);
+    $("[data-prog]", el).innerHTML = `<div class="row between"><h3 class="h3">Mi progreso</h3><a href="#/app/progreso" class="link small">Ver todo</a></div>
+      <div class="row gap kpis wrap"><div><small>Peso actual</small><b>${last ? last.weight + " kg" : "—"}</b></div>
+      <div><small>IMC</small><b>${imc ?? "—"}</b>${imc ? `<span class="chip-mini ${cat.c}">${cat.t}</span>` : ""}</div>
       <div><small>Objetivo</small><b>${m.goalWeight ? m.goalWeight + " kg" : "—"}</b></div>
-      ${last?.weight && prog[0]?.weight ? `<div><small>Cambio</small><b>${(last.weight - prog[0].weight > 0 ? "+" : "") + (last.weight - prog[0].weight).toFixed(1)} kg</b></div>` : ""}</div>
-      ${lineChart(prog.filter((p) => p.weight).slice(-10).map((p) => ({ label: fmtDate(p.date).slice(0, 6), v: +p.weight })), { goal: m.goalWeight ? +m.goalWeight : null, unit: " kg" })}`;
+      ${last && first && last !== first ? `<div><small>Cambio</small><b>${(last.weight - first.weight > 0 ? "+" : "") + (last.weight - first.weight).toFixed(1)} kg</b></div>` : ""}</div>
+      ${lineChart(ws.slice(-10).map((p) => ({ label: fmtDate(p.date).slice(0, 6), v: +p.weight })), { goal: m.goalWeight ? +m.goalWeight : null, unit: " kg" })}`;
   },
 
   async reservar(el, S) {
@@ -138,34 +148,53 @@ const SECTIONS = {
     const [prog, photos] = await Promise.all([loadProgress(S.id), getDocs(collection(db, "members", S.id, "photos"))]);
     const ph = photos.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => a.date.localeCompare(b.date));
     const m = S.member;
-    const metrics = [["weight", "Peso", "kg"], ["fat", "% Grasa", "%"], ["waist", "Cintura", "cm"], ["chest", "Pecho", "cm"], ["arm", "Brazo", "cm"], ["leg", "Pierna", "cm"]];
     const C = $("[data-c]", el);
-    const draw = (metric) => {
-      const [k, , u] = metrics.find((x) => x[0] === metric);
-      $("[data-chart]", C).innerHTML = lineChart(prog.filter((p) => p[k]).map((p) => ({ label: fmtDate(p.date).slice(0, 6), v: +p[k] })), { goal: k === "weight" && m.goalWeight ? +m.goalWeight : null, unit: " " + u });
-      $$("[data-metric]", C).forEach((b) => b.classList.toggle("on", b.dataset.metric === metric));
-    };
     C.innerHTML = `
-      <div class="card reveal"><div class="seg">${metrics.map(([k, l]) => `<button data-metric="${k}">${l}</button>`).join("")}</div><div data-chart></div></div>
+      <div class="reveal">${summaryHTML(m, prog)}</div>
+      <button class="btn btn-metal w100 mt reveal" data-log>${icon("plus")} Registrar mi avance</button>
+      <div class="card mt reveal"><h3 class="h3">Evolución</h3>${chartBlockHTML()}</div>
+      <div class="card mt reveal"><h3 class="h3">Inicial vs actual</h3>${comparisonHTML(m, prog)}</div>
       <h3 class="h3 mt reveal">Fotos</h3>
-      <div class="photos reveal">${ph.length ? ph.map((p) => `<figure class="photo" data-src="${p.id}"><img src="${p.data}" alt="" loading="lazy"><figcaption>${fmtDate(p.date)}${p.label ? " · " + esc(p.label) : ""}</figcaption></figure>`).join("") : `<p class="muted">Tu coach subirá tus fotos de progreso.</p>`}</div>
-      <h3 class="h3 mt reveal">Historial de medidas</h3>
-      <div class="card table-wrap reveal"><table class="table"><thead><tr><th>Fecha</th>${metrics.map(([, l]) => `<th>${l}</th>`).join("")}<th>Notas</th></tr></thead>
-      <tbody>${prog.slice().reverse().map((p) => `<tr><td>${fmtDate(p.date)}</td>${metrics.map(([k]) => `<td>${p[k] ?? "—"}</td>`).join("")}<td class="muted">${esc(p.note || "")}</td></tr>`).join("") || `<tr><td colspan="8" class="muted center">Sin registros</td></tr>`}</tbody></table></div>`;
-    $$("[data-metric]", C).forEach((b) => (b.onclick = () => draw(b.dataset.metric)));
-    $$(".photo", C).forEach((f) => (f.onclick = () => modal(`<img class="photo-full" src="${f.querySelector("img").src}" alt="">`, { wide: true })));
-    draw("weight");
+      <div class="reveal">${beforeAfterHTML(ph)}</div>
+      <div class="photos reveal">${ph.length ? ph.slice().reverse().map((p) => `<figure class="photo"><img src="${p.data}" alt="" loading="lazy"><figcaption>${fmtDate(p.date)}${p.label ? " · " + esc(p.label) : ""}</figcaption></figure>`).join("") : `<p class="muted">Tu coach subirá tus fotos de progreso.</p>`}</div>
+      <h3 class="h3 mt reveal">Historial</h3>
+      <div class="card reveal">${historyHTML(m, prog)}</div>`;
+    bindChart(C, m, prog);
+    $$(".photo img, .ba img", C).forEach((img) => (img.onclick = () => modal(`<img class="photo-full" src="${img.src}" alt="">`, { wide: true })));
+    $("[data-log]", C).onclick = () => {
+      const d = modal(`<h3 class="h3">Registrar mi avance</h3><p class="muted small">Tu coach verá este registro en tu historial.</p>
+        <form class="form" novalidate><label class="field"><span>Fecha</span><input class="inp" type="date" name="date" value="${ymd()}"></label>
+        ${progressFormHTML({ simple: true })}
+        <label class="field"><span>¿Cómo te sentiste esta semana?</span><textarea class="inp" name="note" rows="2"></textarea></label>
+        <button type="submit" class="btn btn-metal w100 lg" data-submit>${icon("check")} Guardar</button></form>`);
+      const f = $("form", d.el);
+      f.onsubmit = async (e) => {
+        e.preventDefault();
+        const data = { date: f.date.value || ymd(), note: f.note.value.trim(), ...readProgressForm(f) };
+        if (!METRIC_FIELDS.some(([k]) => data[k] != null) && !data.note) return toast("Captura al menos un dato", "err");
+        const btn = $("[data-submit]", f); setBusy(btn, true);
+        try {
+          await addDoc(collection(db, "members", S.id, "progress"), { ...data, by: "member", at: serverTimestamp() });
+          notify("admin", `Avance de ${m.name}`, `${data.weight ? `Peso ${data.weight} kg` : "Nuevo registro"}${data.note ? ` · ${data.note.slice(0, 80)}` : ""}`, "progreso");
+          toast("¡Avance registrado!"); d.close(); SECTIONS.progreso(el, S).then(() => enhance(el));
+        } catch (err) { console.error(err); setBusy(btn, false); toast("No se pudo guardar", "err"); }
+      };
+    };
   },
 
   async dieta(el, S) {
     el.innerHTML = `${back("Mi dieta")}<div data-c><div class="center pad"><span class="spinner"></span></div></div>`;
     const d = (await getDoc(doc(db, "members", S.id, "plan", "diet"))).data();
-    $("[data-c]", el).innerHTML = d?.meals?.length ? `
+    const C = $("[data-c]", el);
+    C.innerHTML = d?.meals?.length ? `
       ${d.calories || d.macros ? `<div class="stats3 reveal">${d.calories ? `<div class="stat"><small>Calorías</small><b>${esc(d.calories)}</b></div>` : ""}${d.macros ? `<div class="stat wide"><small>Macros</small><b>${esc(d.macros)}</b></div>` : ""}</div>` : ""}
       <div class="stack">${d.meals.map((m) => `<div class="card meal reveal"><div class="meal-ic">${icon("apple")}</div><div><h4>${esc(m.name)}</h4><p class="pre">${esc(m.text)}</p></div></div>`).join("")}</div>
       ${d.notes ? `<div class="card reveal mt"><h4>Indicaciones del coach</h4><p class="pre muted">${esc(d.notes)}</p></div>` : ""}
+      <div class="btn-row mt reveal"><button class="btn btn-ghost" data-pdf>${icon("download")} Descargar PDF</button><button class="btn btn-ghost" data-xlsx>${icon("download")} Excel</button></div>
       <p class="muted small center mt">Actualizada ${fmtDateTime(d.updatedAt)}</p>`
       : `<div class="card center muted reveal">Tu coach aún no asigna tu dieta.<br><a class="btn btn-ghost mt" href="#/app/chat">Escribir al coach</a></div>`;
+    $("[data-pdf]", C)?.addEventListener("click", () => exportPlan("pdf", "diet", d, S.member));
+    $("[data-xlsx]", C)?.addEventListener("click", () => exportPlan("xlsx", "diet", d, S.member));
   },
 
   async rutina(el, S) {
@@ -182,8 +211,11 @@ const SECTIONS = {
     };
     C.innerHTML = `<div class="seg scroll reveal">${days.map((k) => `<button data-day="${k}">${DAY_LABEL[k]}${k === todayKey ? " •" : ""}</button>`).join("")}</div>
       <div class="card reveal"><div class="ex-list" data-list></div></div>
-      ${d.notes ? `<div class="card reveal mt"><h4>Notas</h4><p class="pre muted">${esc(d.notes)}</p></div>` : ""}`;
+      ${d.notes ? `<div class="card reveal mt"><h4>Notas</h4><p class="pre muted">${esc(d.notes)}</p></div>` : ""}
+      <div class="btn-row mt reveal"><button class="btn btn-ghost" data-pdf>${icon("download")} Descargar PDF</button><button class="btn btn-ghost" data-xlsx>${icon("download")} Excel</button></div>`;
     $$("[data-day]", C).forEach((b) => (b.onclick = () => pick(b.dataset.day)));
+    $("[data-pdf]", C).onclick = () => exportPlan("pdf", "routine", d, S.member);
+    $("[data-xlsx]", C).onclick = () => exportPlan("xlsx", "routine", d, S.member);
     pick(days.includes(todayKey) ? todayKey : days[0]);
   },
 
@@ -218,7 +250,8 @@ const SECTIONS = {
         <div class="kv"><span>Plan</span><b>${esc(m.plan || "—")}</b></div>
         <div class="kv"><span>Vigencia</span><b>${m.paidUntil ? fmtDate(m.paidUntil) : "—"}</b></div>
         <div class="kv"><span>Miembro desde</span><b>${fmtDate(m.createdAt)}</b></div></div>
-      <div class="card reveal stack">
+      <div class="card reveal"><h3 class="h3">Mi ficha</h3>${profileFactsHTML(m)}<p class="muted small mt-s">Si algún dato cambió, avísale a tu coach por el chat.</p></div>
+      <div class="card reveal stack mt">
         <button class="btn btn-ghost w100" data-notif>${icon("bell")} Activar notificaciones</button>
         <button class="btn btn-ghost w100" data-pw>${icon("lock")} Cambiar contraseña</button>
         <button class="btn btn-ghost w100 install-only" onclick="installApp()">${icon("download")} Instalar app</button>
@@ -245,12 +278,15 @@ export async function loadProgress(id) {
 
 export async function cancelReservation(r) {
   await runTransaction(db, async (tx) => {
-    const sRef = doc(db, "slots", r.date);
+    // Se relee la reserva: si ya estaba cancelada (por el coach u otra pestaña) no se libera el lugar dos veces
+    const rRef = doc(db, "reservations", r.id || r.code);
+    const cur = await tx.get(rRef);
+    if (!cur.exists() || cur.data().status === "cancelada") return;
+    const sRef = doc(db, "slots", slotId(r.date, r.className, r.time));
     const s = await tx.get(sRef);
-    const key = `${r.className}__${r.time}`;
-    const used = (s.exists() && s.data()[key]) || 0;
-    tx.set(sRef, { [key]: Math.max(0, used - 1) }, { merge: true });
-    tx.update(doc(db, "reservations", r.id || r.code), { status: "cancelada", cancelledAt: serverTimestamp() });
+    const used = (s.exists() && s.data().n) || 0;
+    if (used > 0) tx.update(sRef, { n: used - 1 });
+    tx.update(rRef, { status: "cancelada", cancelledAt: serverTimestamp() });
   });
 }
 

@@ -17,10 +17,9 @@ export const DEFAULT_CONFIG = {
   links: { instagram: "https://instagram.com/", tiktok: "https://tiktok.com/", youtube: "https://youtube.com/", facebook: "" },
   colors: { bg: "#050505", surface: "#121212", accent: "#e9e9e9", text: "#f2f2f2" },
   classes: [
-    { name: "Spinning", capacity: 15 },
-    { name: "Box", capacity: 10 },
-    { name: "Funcional", capacity: 12 },
-    { name: "Entrenamiento personal", capacity: 1 },
+    { name: "Asesoría personal", capacity: 1 },
+    { name: "Asesoría online", capacity: 5 },
+    { name: "Asesoría presencial", capacity: 8 },
   ],
   hours: ["06:00", "07:00", "08:00", "09:00", "17:00", "18:00", "19:00", "20:00"],
   closedDays: [0],
@@ -28,7 +27,8 @@ export const DEFAULT_CONFIG = {
     { name: "Mensualidad", price: 600, days: 30 },
     { name: "Semana", price: 200, days: 7 },
     { name: "Visita", price: 60, days: 1 },
-    { name: "Entrenamiento personal (mes)", price: 1800, days: 30 },
+    { name: "Asesoría personal (mes)", price: 1800, days: 30 },
+    { name: "Asesoría online (mes)", price: 900, days: 30 },
   ],
   autoBlockDefault: 0,
 };
@@ -39,6 +39,9 @@ export async function loadConfig() {
   try {
     const snap = await getDoc(doc(db, "config", "app"));
     if (snap.exists()) CONFIG = deepMerge(structuredClone(DEFAULT_CONFIG), snap.data());
+    // Configuraciones guardadas antes de las asesorías (Spinning, Box…) pasan a los nuevos servicios.
+    // Al guardar la configuración se marca servicesVersion: 2 y desde ahí se respeta lo que elija el coach.
+    if (!CONFIG.classes?.length || (CONFIG.servicesVersion || 1) < 2) CONFIG.classes = structuredClone(DEFAULT_CONFIG.classes);
   } catch (e) { console.warn("Config por defecto:", e.code || e); }
   applyTheme();
   return CONFIG;
@@ -233,7 +236,7 @@ export function barChart(bars, { height = 170 } = {}) {
 export function passHTML(r) {
   return `<div class="pass tilt" data-tilt>
     <div class="pass-shine"></div>
-    <div class="pass-top"><img data-logo src="${esc(CONFIG.logo)}" alt=""><div><small>Clase</small><b>${esc(r.className)}</b><small>Fecha</small><b>${fmtDate(r.date)}</b></div></div>
+    <div class="pass-top"><img data-logo src="${esc(CONFIG.logo)}" alt=""><div><small>Servicio</small><b>${esc(r.className)}</b><small>Fecha</small><b>${fmtDate(r.date)}</b></div></div>
     <div class="pass-mid">
       <div><small>Hora</small><b>${fmtTime(r.time)}</b><small>Nombre</small><b>${esc(r.name)}</b><small>Código</small><b class="mono">${esc(r.code)}</b></div>
       <div class="qr" data-qr="${esc(r.code)}"></div>
@@ -258,7 +261,7 @@ export function icsFor(r) {
   const d = parseYmd(r.date); d.setHours(h, m);
   const end = new Date(d.getTime() + 60 * 60000);
   const f = (x) => `${x.getFullYear()}${pad(x.getMonth() + 1)}${pad(x.getDate())}T${pad(x.getHours())}${pad(x.getMinutes())}00`;
-  const ics = `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//TeamSavage//ES\r\nBEGIN:VEVENT\r\nUID:${r.code}@teamsavage\r\nDTSTART:${f(d)}\r\nDTEND:${f(end)}\r\nSUMMARY:${r.className} - ${CONFIG.gymName}\r\nDESCRIPTION:Código ${r.code}\r\nBEGIN:VALARM\r\nTRIGGER:-PT60M\r\nACTION:DISPLAY\r\nDESCRIPTION:Tu clase empieza en 1 hora\r\nEND:VALARM\r\nEND:VEVENT\r\nEND:VCALENDAR`;
+  const ics = `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//TeamSavage//ES\r\nBEGIN:VEVENT\r\nUID:${r.code}@teamsavage\r\nDTSTART:${f(d)}\r\nDTEND:${f(end)}\r\nSUMMARY:${r.className} - ${CONFIG.gymName}\r\nDESCRIPTION:Código ${r.code}\r\nBEGIN:VALARM\r\nTRIGGER:-PT60M\r\nACTION:DISPLAY\r\nDESCRIPTION:Tu sesión empieza en 1 hora\r\nEND:VALARM\r\nEND:VEVENT\r\nEND:VCALENDAR`;
   const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([ics], { type: "text/calendar" })); a.download = `reserva-${r.code}.ics`; a.click();
 }
 

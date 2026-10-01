@@ -45,6 +45,10 @@ service cloud.firestore {
         allow read: if isAdmin() || isOwner(id);
         allow write: if isAdmin();
       }
+      // El socio puede registrar su propio avance (peso, medidas, cómo se sintió)
+      match /progress/{docId} {
+        allow create: if isOwner(id) && request.resource.data.by == 'member' && request.resource.data.date is string;
+      }
     }
 
     match /chats/{id} {
@@ -71,10 +75,15 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // Cupos ocupados por fecha (contador público)
-    match /slots/{date} {
+    // Cupos: un documento por fecha + servicio + hora { date, key, n }.
+    // Cada escritura solo puede sumar o restar 1 lugar (reservar / cancelar).
+    match /slots/{id} {
       allow read: if true;
-      allow write: if request.resource.data.size() < 200;
+      allow create: if request.resource.data.keys().hasOnly(['date', 'key', 'n'])
+        && request.resource.data.date is string && request.resource.data.key is string && request.resource.data.n == 1;
+      allow update: if isAdmin() || (onlyKeys(['n']) && request.resource.data.n is int && request.resource.data.n >= 0
+        && (request.resource.data.n == resource.data.n + 1 || request.resource.data.n == resource.data.n - 1));
+      allow delete: if isAdmin();
     }
 
     match /notifications/{n} {

@@ -58,6 +58,24 @@ Requiere plan **Blaze** (pago por uso; el uso de un gym queda en la capa gratuit
 
 En iPhone las push web solo funcionan si la app se **instala** en la pantalla de inicio (iOS 16.4+).
 
+## Seguimiento nutricional y fitness
+- **Ficha completa al registrar al cliente:** datos generales (edad/fecha de nacimiento, sexo, contacto, emergencia),
+  medidas iniciales (estatura, peso, IMC automático, cintura, cadera, % grasa), objetivo, nivel de actividad,
+  experiencia, servicio, salud (lesiones, enfermedades, medicamentos, alergias), hábitos y preferencias alimentarias.
+  Las medidas iniciales quedan como primer registro del historial.
+- **Progreso (coach y cliente):** peso, IMC con categoría, % grasa, masa muscular, grasa visceral, agua, masa ósea,
+  edad metabólica, 9 perímetros, presión arterial, FC, glucosa, apego a dieta/entreno, energía, sueño, agua y pasos.
+  Calcula masa grasa/magra, índice cintura-cadera, cintura-estatura, metabolismo basal (Mifflin-St Jeor),
+  gasto diario y rango de peso saludable. Gráfica por métrica, tabla inicial vs actual, historial y fotos antes/ahora.
+  El cliente también puede registrar su propio avance (aparece marcado como "Cliente").
+- **Servicios:** Asesoría personal, Asesoría online y Asesoría presencial (editables en Configuración).
+
+## Importar y exportar rutina / dieta
+- **Exportar:** PDF (con logo), Excel, CSV, texto, copiar o enviar por WhatsApp. El cliente puede descargar su PDF/Excel.
+- **Importar:** sube PDF, Excel/CSV, Word (.docx), .txt o una foto (OCR). Se convierte a texto, se puede editar y se
+  reparte automáticamente por días (Lunes…Domingo / Día 1…7) o por comidas (Desayuno, Colación, Comida, Cena…).
+  Los PDF escaneados (sin texto) deben subirse como imagen.
+
 ## Extras agregados
 - Cupo por clase y horario (no se sobrevende), días cerrados, horarios configurables.
 - Check-in escaneando el QR del pase (o escribiendo el código).

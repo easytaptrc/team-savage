@@ -1,9 +1,9 @@
 // Service Worker: caché offline + notificaciones push (FCM)
-const CACHE = "ts-v2";
+const CACHE = "ts-v3";
 const ASSETS = [
   "./", "index.html", "css/styles.css", "js/app.js", "js/ui.js", "js/firebase.js", "js/metrics.js", "js/docs.js",
   "js/views/home.js", "js/views/reserva.js", "js/views/pases.js", "js/views/team.js", "js/views/client.js", "js/views/admin.js",
-  "assets/logo.jpg", "assets/icon-192.png", "assets/icon-512.png", "manifest.json",
+  "assets/logo.jpg", "assets/fondo.jpg", "assets/icon-192.png", "assets/icon-512.png", "manifest.json",
 ];
 
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting())); });

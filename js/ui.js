@@ -14,6 +14,9 @@ export const DEFAULT_CONFIG = {
   whatsapp: "528711234567",
   phone: "+52 871 123 4567",
   address: "",
+  location: "Torreón, Coah.",
+  mapsUrl: "",
+  cover: "assets/fondo.jpg",
   links: { instagram: "https://instagram.com/", tiktok: "https://tiktok.com/", youtube: "https://youtube.com/", facebook: "" },
   colors: { bg: "#050505", surface: "#121212", accent: "#e9e9e9", text: "#f2f2f2" },
   classes: [

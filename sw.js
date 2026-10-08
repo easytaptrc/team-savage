@@ -1,12 +1,15 @@
 // Service Worker: caché offline + notificaciones push (FCM)
-const CACHE = "ts-v3";
+const CACHE = "ts-v4";
 const ASSETS = [
   "./", "index.html", "css/styles.css", "js/app.js", "js/ui.js", "js/firebase.js", "js/metrics.js", "js/docs.js",
   "js/views/home.js", "js/views/reserva.js", "js/views/pases.js", "js/views/team.js", "js/views/client.js", "js/views/admin.js",
-  "assets/logo.jpg", "assets/fondo.jpg", "assets/icon-192.png", "assets/icon-512.png", "manifest.json",
+  "assets/logo.jpg", "assets/fondo.jpg", "assets/icon-192.png", "assets/icon-512.png", "assets/apple-touch-icon.png", "manifest.json",
 ];
 
-self.addEventListener("install", (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting())); });
+// Cada archivo se guarda por separado: si alguno falta en el servidor, los demás sí quedan disponibles
+self.addEventListener("install", (e) => {
+  e.waitUntil(caches.open(CACHE).then((c) => Promise.all(ASSETS.map((a) => c.add(a).catch(() => console.warn("SW: no se pudo guardar", a))))).then(() => self.skipWaiting()));
+});
 self.addEventListener("activate", (e) => {
   e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
 });

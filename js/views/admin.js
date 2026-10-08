@@ -761,10 +761,17 @@ const SECTIONS = {
           <label class="field"><span>Nombre del gym</span><input class="inp" name="gymName" value="${esc(C.gymName)}"></label>
           <label class="field"><span>Eslogan</span><input class="inp" name="slogan" value="${esc(C.slogan)}"></label>
           <label class="field"><span>Frase</span><input class="inp" name="quote" value="${esc(C.quote)}"></label>
+          <div class="field"><span>Imagen de portada (inicio)</span>
+            <div class="row gap"><img class="cfg-cover" data-cover-prev src="${esc(C.cover)}" alt=""><div class="stack grow">
+              <label class="btn btn-ghost">${icon("camera")} Cambiar portada<input type="file" accept="image/*" data-cover-file hidden></label>
+              <button type="button" class="btn btn-text sm" data-cover-reset>Restaurar portada original</button>
+              <p class="muted small">Vertical 9:16 (ej. 900×1600). Los botones se colocan sobre la parte inferior.</p></div></div></div>
         </div>
         <div class="card reveal"><h3 class="h3">Contacto y redes</h3>
           <label class="field"><span>WhatsApp del coach (con lada, ej. 528711234567)</span><input class="inp" name="whatsapp" value="${esc(C.whatsapp)}"></label>
           <label class="field"><span>Teléfono visible</span><input class="inp" name="phone" value="${esc(C.phone)}"></label>
+          <label class="field"><span>Ubicación (se ve en el inicio)</span><input class="inp" name="location" value="${esc(C.location || "")}" placeholder="Torreón, Coah."></label>
+          <label class="field"><span>Enlace de Google Maps <em>(opcional)</em></span><input class="inp" name="mapsUrl" value="${esc(C.mapsUrl || "")}" placeholder="https://maps.app.goo.gl/…"></label>
           ${["instagram", "tiktok", "youtube", "facebook"].map((k) => `<label class="field"><span>${k[0].toUpperCase() + k.slice(1)}</span><div class="input">${icon(k)}<input name="l_${k}" value="${esc(C.links[k] || "")}" placeholder="https://… (vacío = oculto)"></div></label>`).join("")}
         </div>
         <div class="card reveal"><h3 class="h3">Colores</h3>
@@ -798,6 +805,8 @@ const SECTIONS = {
     $$("input[type=color]", f).forEach((i) => (i.oninput = preview));
     $("[data-logo-file]", el).onchange = async (e) => { const file = e.target.files[0]; if (!file) return; C.logo = await compressImage(file, 700, 0.9); $("[data-logo-prev]", el).src = C.logo; };
     $("[data-logo-reset]", el).onclick = () => { C.logo = "assets/logo.jpg"; $("[data-logo-prev]", el).src = C.logo; };
+    $("[data-cover-file]", el).onchange = async (e) => { const file = e.target.files[0]; if (!file) return; C.cover = await compressImage(file, 1600, 0.8); $("[data-cover-prev]", el).src = C.cover; };
+    $("[data-cover-reset]", el).onclick = () => { C.cover = "assets/fondo.jpg"; $("[data-cover-prev]", el).src = C.cover; };
     $("[data-pw]", el).onclick = () => changePasswordDialog();
     f.onsubmit = async (e) => {
       e.preventDefault(); sync();
@@ -805,7 +814,7 @@ const SECTIONS = {
       if (!hours.length) return toast("Agrega al menos una hora válida (ej. 07:00)", "err");
       const data = {
         gymName: f.gymName.value.trim() || "Team Savage", slogan: f.slogan.value.trim(), quote: f.quote.value.trim(), logo: C.logo,
-        whatsapp: cleanPhone(f.whatsapp.value), phone: f.phone.value.trim(),
+        whatsapp: cleanPhone(f.whatsapp.value), phone: f.phone.value.trim(), location: f.location.value.trim(), mapsUrl: f.mapsUrl.value.trim(), cover: C.cover,
         links: Object.fromEntries(["instagram", "tiktok", "youtube", "facebook"].map((k) => [k, f[`l_${k}`].value.trim()])),
         colors: { bg: f.c_bg.value, surface: f.c_surface.value, accent: f.c_accent.value, text: f.c_text.value },
         hours, closedDays: $$("input[name=cd]:checked", f).map((i) => Number(i.value)),

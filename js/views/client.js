@@ -15,6 +15,8 @@ import {
   bmi, bmiCategory, METRIC_FIELDS,
 } from "../metrics.js";
 import { exportPlan, DAYS_ORDER, DAY_LABEL } from "../docs.js";
+import { mountPdfViewer } from "../pdfplan.js";
+import { needsConfirmation, confirmBannerHTML, bindConfirmBanners, maybePromptNotifications, enableNotifications } from "../reminders.js";
 
 const TABS = [
   ["inicio", "home", "Inicio"], ["reservar", "calendar", "Reservar"], ["progreso", "chart", "Progreso"],
@@ -61,6 +63,7 @@ export async function render(root, r) {
     const b = $(".badge", root); b.hidden = !n; b.textContent = n > 9 ? "9+" : n;
   }));
   if ("Notification" in window && Notification.permission === "granted") registerPush(`member:${id}`);
+  maybePromptNotifications(`member:${id}`, { delay: 1200, key: "ts_notif_prompted_panel" });
 
   async function show(section) {
     S.section = section;
@@ -94,6 +97,7 @@ const SECTIONS = {
     el.innerHTML = `
       ${due !== null && due <= 5 ? `<div class="alert ${due < 0 ? "alert-err" : "alert-warn"} reveal">${icon("money")}
         ${due < 0 ? `Tu ${esc(m.plan || "membresía")} venció el ${fmtDate(paid)}.` : `Tu ${esc(m.plan || "membresía")} vence en ${due} día${due === 1 ? "" : "s"} (${fmtDate(paid)}).`}</div>` : ""}
+      <div class="stack mb-s" data-confirm-box></div>
       <div class="tiles">${tiles.map(([k, ic, l]) => `<a href="#/app/${k}" class="tile reveal" data-tilt="12"><span class="tile-ic">${icon(ic)}</span><b>${l}</b><span class="tile-glow"></span></a>`).join("")}</div>
       <div class="card reveal" data-prog><div class="row between"><h3 class="h3">Mi progreso</h3><a href="#/app/progreso" class="link small">Ver historial</a></div><div class="center pad"><span class="spinner"></span></div></div>
       <div class="stats3 reveal">
@@ -102,6 +106,12 @@ const SECTIONS = {
         <div class="stat"><small>Plan</small><b>${esc(m.plan || "—")}</b></div>
       </div>
       <div class="banner reveal" data-tilt="6"><div><b>Disciplina hoy</b><b>Resultados siempre</b></div>${icon("flame", "banner-ic")}</div>`;
+    // Citas que necesitan confirmación (ej. mañana 9:30 → hoy desde las 8 pm)
+    getDocs(query(collection(db, "reservations"), where("memberId", "==", S.id))).then((snap) => {
+      const pend = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((r) => needsConfirmation(r));
+      const box = $("[data-confirm-box]", el); if (!box || !pend.length) return;
+      box.innerHTML = pend.map(confirmBannerHTML).join(""); bindConfirmBanners(box);
+    }).catch(() => {});
     const prog = await loadProgress(S.id);
     const ws = prog.filter((p) => p.weight);
     const last = ws.at(-1), first = ws[0];
@@ -127,13 +137,15 @@ const SECTIONS = {
     const up = list.filter((r) => r.date >= today && r.status !== "cancelada" && r.status !== "completada");
     const past = list.filter((r) => !up.includes(r));
     const L = $("[data-l]", el);
-    L.innerHTML = `${up.length ? up.map((r) => `<div class="reveal">${passHTML(r)}
+    L.innerHTML = `${up.filter((r) => needsConfirmation(r)).map(confirmBannerHTML).join("")}${up.length ? up.map((r) => `<div class="reveal">${passHTML(r)}
+        ${r.attendanceConfirmed ? `<p class="small center mt-s" style="color:var(--ok)">${icon("check")} Asistencia confirmada</p>` : ""}
         <div class="btn-row mt-s"><button class="btn btn-ghost w100" data-dl="${r.id}">${icon("download")} Guardar</button>
         <button class="btn btn-ghost danger w100" data-cancel="${r.id}">${icon("x")} Cancelar</button></div></div>`).join("")
       : `<div class="card center muted reveal">No tienes reservas próximas<br><a class="btn btn-metal mt" href="#/app/reservar">Reservar ahora</a></div>`}
       ${past.length ? `<h3 class="h3 mt">Historial</h3><div class="card list reveal">${past.slice(0, 30).map((r) => `
         <div class="li"><div><b>${esc(r.className)}</b><small>${fmtDate(r.date)} · ${fmtTime(r.time)}</small></div>${chip(r.status, r.date < today)}</div>`).join("")}</div>` : ""}`;
     enhance(L);
+    bindConfirmBanners(L);
     $$("[data-dl]", L).forEach((b) => (b.onclick = () => downloadPass(b.closest(".reveal").querySelector(".pass"), `pase-${b.dataset.dl}`)));
     $$("[data-cancel]", L).forEach((b) => (b.onclick = async () => {
       const r = list.find((x) => x.id === b.dataset.cancel);
@@ -168,13 +180,15 @@ const SECTIONS = {
     el.innerHTML = `${back("Mi dieta")}<div data-c><div class="center pad"><span class="spinner"></span></div></div>`;
     const d = (await getDoc(doc(db, "members", S.id, "plan", "diet"))).data();
     const C = $("[data-c]", el);
-    C.innerHTML = d?.meals?.length ? `
+    const dietHasText = d?.meals?.some((x) => (x.text || "").trim());
+    C.innerHTML = (d?.pdf ? `<div class="card reveal mb-s" data-pdfview></div>` : "") + (dietHasText ? `
       ${d.calories || d.macros ? `<div class="stats3 reveal">${d.calories ? `<div class="stat"><small>Calorías</small><b>${esc(d.calories)}</b></div>` : ""}${d.macros ? `<div class="stat wide"><small>Macros</small><b>${esc(d.macros)}</b></div>` : ""}</div>` : ""}
       <div class="stack">${d.meals.map((m) => `<div class="card meal reveal"><div class="meal-ic">${icon("apple")}</div><div><h4>${esc(m.name)}</h4><p class="pre">${esc(m.text)}</p></div></div>`).join("")}</div>
       ${d.notes ? `<div class="card reveal mt"><h4>Indicaciones del coach</h4><p class="pre muted">${esc(d.notes)}</p></div>` : ""}
       <div class="btn-row mt reveal"><button class="btn btn-ghost" data-pdf>${icon("download")} Descargar PDF</button><button class="btn btn-ghost" data-xlsx>${icon("download")} Excel</button></div>
       <p class="muted small center mt">Actualizada ${fmtDateTime(d.updatedAt)}</p>`
-      : `<div class="card center muted reveal">Tu coach aún no asigna tu dieta.<br><a class="btn btn-ghost mt" href="#/app/chat">Escribir al coach</a></div>`;
+      : d?.pdf ? "" : `<div class="card center muted reveal">Tu coach aún no asigna tu dieta.<br><a class="btn btn-ghost mt" href="#/app/chat">Escribir al coach</a></div>`);
+    if (d?.pdf) mountPdfViewer($("[data-pdfview]", C), { memberId: S.id, kind: "diet", meta: d.pdf, title: "dieta" });
     $("[data-pdf]", C)?.addEventListener("click", () => exportPlan("pdf", "diet", d, S.member));
     $("[data-xlsx]", C)?.addEventListener("click", () => exportPlan("xlsx", "diet", d, S.member));
   },
@@ -184,7 +198,11 @@ const SECTIONS = {
     const d = (await getDoc(doc(db, "members", S.id, "plan", "routine"))).data();
     const days = DAYS_ORDER.filter((k) => d?.days?.[k]?.trim());
     const C = $("[data-c]", el);
-    if (!days.length) { C.innerHTML = `<div class="card center muted reveal">Tu coach aún no asigna tu rutina.<br><a class="btn btn-ghost mt" href="#/app/chat">Escribir al coach</a></div>`; return; }
+    if (!days.length) {
+      C.innerHTML = d?.pdf ? `<div class="card reveal" data-pdfview></div>` : `<div class="card center muted reveal">Tu coach aún no asigna tu rutina.<br><a class="btn btn-ghost mt" href="#/app/chat">Escribir al coach</a></div>`;
+      if (d?.pdf) mountPdfViewer($("[data-pdfview]", C), { memberId: S.id, kind: "routine", meta: d.pdf, title: "rutina" });
+      return;
+    }
     const todayKey = DAYS_ORDER[(new Date().getDay() + 6) % 7];
     const pick = (k) => {
       $$("[data-day]", C).forEach((b) => b.classList.toggle("on", b.dataset.day === k));
@@ -195,7 +213,8 @@ const SECTIONS = {
       <div class="card reveal"><div class="ex-list" data-list></div></div>
       ${d.notes ? `<div class="card reveal mt"><h4>Notas</h4><p class="pre muted">${esc(d.notes)}</p></div>` : ""}
       <div class="btn-row mt reveal"><button class="btn btn-ghost" data-pdf>${icon("download")} Descargar PDF</button><button class="btn btn-ghost" data-xlsx>${icon("download")} Excel</button></div>`;
-    $$("[data-day]", C).forEach((b) => (b.onclick = () => pick(b.dataset.day)));
+    if (d?.pdf) { C.insertAdjacentHTML("afterbegin", `<div class="card reveal mb-s" data-pdfview></div>`); mountPdfViewer($("[data-pdfview]", C), { memberId: S.id, kind: "routine", meta: d.pdf, title: "rutina" }); }
+    $("[data-day]", C).forEach((b) => (b.onclick = () => pick(b.dataset.day)));
     $("[data-pdf]", C).onclick = () => exportPlan("pdf", "routine", d, S.member);
     $("[data-xlsx]", C).onclick = () => exportPlan("xlsx", "routine", d, S.member);
     pick(days.includes(todayKey) ? todayKey : days[0]);
@@ -273,7 +292,7 @@ const SECTIONS = {
     $("[data-notif]", el).onclick = async () => {
       if (!("Notification" in window)) return toast("Tu navegador no soporta notificaciones", "err");
       const p = await Notification.requestPermission();
-      if (p === "granted") { await registerPush(`member:${S.id}`); toast("Notificaciones activadas"); } else toast("Permiso denegado", "err");
+      await enableNotifications(`member:${S.id}`);
     };
     $("[data-pw]", el).onclick = () => changePasswordDialog();
   },

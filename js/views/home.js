@@ -1,5 +1,6 @@
 // 1. INDEX — portada minimalista: imagen de fondo, RESERVA, TEAM y redes
 import { CONFIG, icon, esc } from "../ui.js";
+import { needsConfirmation, confirmBannerHTML, bindConfirmBanners, notifState, enableNotifications, maybePromptNotifications } from "../reminders.js";
 
 export async function render(root) {
   const L = CONFIG.links;
@@ -9,6 +10,7 @@ export async function render(root) {
   const mapUrl = CONFIG.mapsUrl || (loc ? `https://www.google.com/maps/search/${encodeURIComponent(`${CONFIG.gymName} ${loc}`)}` : "");
   let passes = [];
   try { passes = JSON.parse(localStorage.getItem("ts_passes") || "[]"); } catch {}
+  const pending = passes.filter((r) => needsConfirmation(r));
   const cover = esc(CONFIG.cover || "assets/fondo.jpg");
 
   root.innerHTML = `
@@ -16,6 +18,8 @@ export async function render(root) {
     <div class="cover-backdrop" style="background-image:url('${cover}')" aria-hidden="true"></div>
     <div class="cover-col">
       <div class="cover-media" aria-hidden="true"><img src="${cover}" alt="" fetchpriority="high"></div>
+      <button class="cover-bell" data-bell aria-label="Notificaciones">${icon("bell")}<i></i></button>
+      ${pending.length ? `<div class="cover-alerts">${pending.map(confirmBannerHTML).join("")}</div>` : ""}
       <div class="cover-content">
         <a href="#/reserva" class="pill pill-main">
           <span class="pill-ic">${icon("calendar")}</span><span class="pill-label">Reserva</span><span class="pill-arrow">${arrow()}</span>
@@ -39,6 +43,20 @@ export async function render(root) {
       </div>
     </div>
   </section>`;
+
+  // Campana: muestra el estado y activa las notificaciones
+  const bell = root.querySelector("[data-bell]");
+  const paint = () => { const s = notifState(); bell.classList.toggle("on", s === "granted"); bell.classList.toggle("ask", s === "default"); };
+  paint();
+  bell.onclick = async () => {
+    if (notifState() === "granted") { enableNotifications("device"); return; } // re-registra el dispositivo por si cambió
+    await enableNotifications("device"); paint();
+  };
+  const onChange = () => paint();
+  document.addEventListener("ts-notif-change", onChange);
+  bindConfirmBanners(root);
+  maybePromptNotifications("device");
+  return { destroy: () => document.removeEventListener("ts-notif-change", onChange) };
 }
 
 const arrow = () => `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h15M14 7l5 5-5 5"/></svg>`;

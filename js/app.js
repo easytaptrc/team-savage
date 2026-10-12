@@ -21,6 +21,7 @@ function parse() {
   if (!a) return { view: "home" };
   if (a === "reserva") return { view: "reserva" };
   if (a === "pases") return { view: "pases" };
+  if (a === "confirmar") return { view: "pases", confirm: decodeURIComponent(b || "") };
   if (a === "team") return { view: "team", mode: b === "crear" ? "crear" : "login" };
   if (a === "app") return { view: "client", section: b || "inicio", arg: c };
   if (a === "admin") return { view: "admin", section: b || "inicio", arg: c };

@@ -15,6 +15,9 @@ import {
   comparisonHTML, historyHTML, beforeAfterHTML, profileFactsHTML, progressFormHTML, readProgressForm,
 } from "../metrics.js";
 import { exportPlan, fileToText, parseRoutine, parseDiet, IMPORT_ACCEPT, DAYS_ORDER, DAY_LABEL } from "../docs.js";
+import { needsConfirmation, shouldRelease } from "../reminders.js";
+import { slotId } from "./reserva.js";
+import { uploadPlanPdf, removePlanPdf, mountPdfViewer, MAX_PDF_MB } from "../pdfplan.js";
 
 const NAV = [
   ["inicio", "home", "Inicio"], ["reservas", "calendar", "Reservas"], ["clientes", "users", "Clientes"],
@@ -72,6 +75,7 @@ export async function render(root, r) {
   S.unsubs.push(onSnapshot(query(collection(db, "reservations"), orderBy("createdAt", "desc"), limit(1500)), (snap) => {
     S.reservations = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     loaded.r = true;
+    if (!S.releaseTimer) { S.releaseTimer = setInterval(() => releaseSweep(S), 5 * 60 * 1000); releaseSweep(S); }
     const newCount = S.reservations.filter((x) => x.status === "pendiente").length;
     badge(root, "reservas", newCount);
     rerender();
@@ -111,7 +115,7 @@ export async function render(root, r) {
 
   return {
     update: (nr) => show(nr.section, nr.arg),
-    destroy: () => { S.unsubs.forEach((u) => u?.()); S.sub?.(); },
+    destroy: () => { S.unsubs.forEach((u) => u?.()); S.sub?.(); clearInterval(S.releaseTimer); },
   };
 }
 
@@ -954,7 +958,7 @@ const CTABS = {
   async rutina(c, S, m) {
     const d = (await getDoc(doc(db, "members", m.id, "plan", "routine"))).data() || { days: {}, notes: "" };
     const tpls = (await getDocs(query(collection(db, "templates"), where("kind", "==", "routine")))).docs.map((x) => ({ id: x.id, ...x.data() }));
-    c.innerHTML = `<form class="card form reveal" data-f>
+    c.innerHTML = `${planExtrasHTML("routine", d)}<form class="card form reveal" data-f>
       <div class="row between wrap gap"><h3 class="h3">Rutina semanal</h3>${planToolbar(tpls)}</div>
       <p class="muted small">Un ejercicio por línea. Ej: <span class="mono">Sentadilla 4x12 — 60kg</span>. Deja vacío el día de descanso.</p>
       <div class="grid2">${DAYS_ORDER.map((k) => `<label class="field"><span>${DAY_LABEL[k]}</span><textarea class="inp" rows="6" name="${k}">${esc(d.days?.[k] || "")}</textarea></label>`).join("")}
@@ -964,7 +968,7 @@ const CTABS = {
     const read = () => ({ days: Object.fromEntries(DAYS_ORDER.map((k) => [k, f[k].value])), notes: f.notes.value });
     $("[data-tpl]", c)?.addEventListener("change", (e) => { const t = tpls.find((x) => x.id === e.target.value); if (!t) return; DAYS_ORDER.forEach((k) => (f[k].value = t.data.days?.[k] || "")); f.notes.value = t.data.notes || ""; });
     $("[data-save-tpl]", c).onclick = () => saveTemplate("routine", read());
-    bindPlanToolbar(c, "routine", read, m, (text, dest, mode) => {
+    const apply = (text, dest, mode) => {
       const put = (name, val) => { f[name].value = mode === "append" && f[name].value.trim() ? `${f[name].value.trim()}\n${val}` : val; };
       if (dest === "auto") {
         const r = parseRoutine(text);
@@ -977,10 +981,12 @@ const CTABS = {
       }
       put(dest, text);
       return `Texto pegado en ${dest === "notes" ? "Notas" : DAY_LABEL[dest]}.`;
-    });
+    };
+    bindPlanToolbar(c, "routine", read, m, apply);
+    bindPlanExtras(c, "routine", m, d, apply);
     f.onsubmit = async (e) => {
       e.preventDefault();
-      await setDoc(doc(db, "members", m.id, "plan", "routine"), { ...read(), updatedAt: serverTimestamp() });
+      await setDoc(doc(db, "members", m.id, "plan", "routine"), { ...read(), updatedAt: serverTimestamp() }, { merge: true });
       notify(m.id, "Rutina actualizada", "Tu coach actualizó tu rutina 🏋️", "rutina"); toast("Rutina guardada");
     };
   },
@@ -991,7 +997,7 @@ const CTABS = {
     let meals = (d.meals || []).slice();
     const w = (await loadProgress(m.id)).filter((p) => p.weight).at(-1)?.weight || m.initWeight;
     const T = tdee(m, w);
-    c.innerHTML = `<form class="card form reveal" data-f>
+    c.innerHTML = `${planExtrasHTML("diet", d)}<form class="card form reveal" data-f>
       <div class="row between wrap gap"><h3 class="h3">Plan de alimentación</h3>${planToolbar(tpls)}</div>
       ${T ? `<p class="muted small">Referencia: TMB ${bmr(m, w)} kcal · GET ${T} kcal (${esc(m.goal || "sin objetivo")}). Déficit sugerido −15–20 % · superávit +10 %.</p>` : ""}
       <div class="grid2"><label class="field"><span>Calorías diarias</span><input class="inp" name="calories" value="${esc(d.calories || "")}" placeholder="${T ? T + " kcal" : "2,100 kcal"}"></label>
@@ -1011,7 +1017,7 @@ const CTABS = {
     $("[data-add]", c).onclick = () => { sync(); meals.push({ name: "Comida", text: "" }); draw(); };
     $("[data-tpl]", c)?.addEventListener("change", (e) => { const t = tpls.find((x) => x.id === e.target.value); if (!t) return; meals = t.data.meals.slice(); f.calories.value = t.data.calories || ""; f.macros.value = t.data.macros || ""; f.notes.value = t.data.notes || ""; draw(); });
     $("[data-save-tpl]", c).onclick = () => saveTemplate("diet", read());
-    bindPlanToolbar(c, "diet", read, m, (text, dest, mode) => {
+    const apply = (text, dest, mode) => {
       sync();
       const putNotes = (v) => { f.notes.value = mode === "append" && f.notes.value.trim() ? `${f.notes.value.trim()}\n${v}` : v; };
       if (dest === "auto") {
@@ -1028,10 +1034,12 @@ const CTABS = {
       if (dest === "notes") { putNotes(text); return "Texto pegado en Indicaciones."; }
       meals.push({ name: "Plan importado", text }); draw();
       return "Se agregó como una comida nueva.";
-    });
+    };
+    bindPlanToolbar(c, "diet", read, m, apply);
+    bindPlanExtras(c, "diet", m, d, apply);
     f.onsubmit = async (e) => {
       e.preventDefault();
-      await setDoc(doc(db, "members", m.id, "plan", "diet"), { ...read(), updatedAt: serverTimestamp() });
+      await setDoc(doc(db, "members", m.id, "plan", "diet"), { ...read(), updatedAt: serverTimestamp() }, { merge: true });
       notify(m.id, "Dieta actualizada", "Tu coach actualizó tu plan de alimentación 🥗", "dieta"); toast("Dieta guardada");
     };
   },
@@ -1055,6 +1063,74 @@ const CTABS = {
       <div class="card reveal"><h3 class="h3">Historial (${list.length})</h3><div class="list scroll-y">${list.slice(0, 100).map((a) => `<div class="li"><span class="grow">${fmtDate(a.date)}</span><small class="muted">${esc(a.note || "")}</small></div>`).join("") || `<p class="muted">Sin asistencias</p>`}</div></div></div>`;
   },
 };
+
+/* ---------- Escribir el plan completo + PDF del plan ---------- */
+const WRITE_HELP = {
+  routine: { title: "Escribir la rutina completa", ph: "Lunes - Pecho y tríceps\nPress banca 4x10\nAperturas 3x12\nFondos 3x al fallo\n\nMartes - Pierna\nSentadilla 4x8\nPrensa 4x12\n\nMiércoles\nDescanso\n\nJueves: Espalda\nDominadas 4x8\n…",
+    tips: ["Escribe el día en su propio renglón: <b>Lunes</b>, <b>Martes</b>… o <b>Día 1</b>, <b>Día 2</b>…", "Debajo, un ejercicio por renglón (series × repeticiones, peso, descanso).", "También funciona en un renglón: <b>Lunes: Pecho y tríceps</b>.", "Lo que vaya bajo <b>Notas:</b> se guarda en Notas generales."] },
+  diet: { title: "Escribir la dieta completa", ph: "Plan 1,900 kcal\nMacros: P 150 g · C 190 g · G 55 g\n\nDesayuno\n3 claras + 1 huevo\n40 g de avena\n\nColación 1\n1 manzana + 15 almendras\n\nComida\n150 g de pollo\n1 taza de arroz\n\nCena\n1 lata de atún con verduras\n\nIndicaciones: 3 L de agua al día",
+    tips: ["Escribe cada comida en su propio renglón: <b>Desayuno</b>, <b>Colación</b>, <b>Comida</b>, <b>Cena</b>, <b>Pre-entreno</b>…", "Debajo, los alimentos y porciones, uno por renglón.", "Un renglón con <b>kcal</b> llena las calorías y uno con <b>Macros:</b> los macros.", "Lo que vaya bajo <b>Indicaciones:</b> se guarda aparte."] },
+};
+
+function planExtrasHTML(kind, d) {
+  const h = WRITE_HELP[kind];
+  return `<div class="grid2 mb-s">
+    <div class="card reveal"><h3 class="h3">${h.title}</h3>
+      <ul class="tips">${h.tips.map((t) => `<li>${t}</li>`).join("")}</ul>
+      <textarea class="inp mono-sm" rows="9" data-write placeholder="${esc(h.ph)}"></textarea>
+      <div class="detect" data-detect><span class="muted small">Escribe o pega el plan y aquí verás cómo se divide.</span></div>
+      <div class="row gap-s wrap mt-s"><button type="button" class="btn btn-metal sm" data-split>${icon("check")} ${kind === "routine" ? "Dividir en días" : "Separar por comidas"}</button>
+        <label class="check small"><input type="checkbox" data-append><span></span>Agregar a lo que ya hay</label></div>
+    </div>
+    <div class="card reveal"><h3 class="h3">PDF del plan <em>(opcional)</em></h3>
+      <p class="muted small">Sube el PDF tal cual; el cliente lo verá dentro de su app y podrá descargarlo. Máximo ${MAX_PDF_MB} MB.</p>
+      <div data-pdf-box>${d?.pdf ? "" : `<p class="muted small">Sin PDF.</p>`}</div>
+      <div class="row gap-s wrap mt-s"><label class="btn btn-ghost sm">${icon("download", "rot180")} ${d?.pdf ? "Reemplazar PDF" : "Subir PDF"}<input type="file" accept="application/pdf,.pdf" data-pdf-file hidden></label>
+        ${d?.pdf ? `<button type="button" class="btn btn-ghost danger sm" data-pdf-del>${icon("trash")} Quitar PDF</button>` : ""}</div>
+    </div></div>`;
+}
+
+function bindPlanExtras(c, kind, m, d, apply) {
+  const ta = $("[data-write]", c), det = $("[data-detect]", c);
+  const preview = () => {
+    const t = ta.value.trim();
+    if (!t) { det.innerHTML = `<span class="muted small">Escribe o pega el plan y aquí verás cómo se divide.</span>`; return; }
+    if (kind === "routine") {
+      const r = parseRoutine(t);
+      det.innerHTML = r.found
+        ? DAYS_ORDER.map((k) => r.days[k] ? `<span class="dchip on">${DAY_LABEL[k]} · ${r.days[k].split("\n").length}</span>` : `<span class="dchip">${DAY_LABEL[k]}</span>`).join("") + (r.notes ? `<span class="dchip note">Notas</span>` : "")
+        : `<span class="small" style="color:var(--warn)">No se detectan días. Escribe «Lunes», «Martes»… o «Día 1» en su propio renglón.</span>`;
+    } else {
+      const r = parseDiet(t);
+      det.innerHTML = r.found
+        ? r.meals.map((x) => `<span class="dchip on">${esc(x.name)} · ${x.text ? x.text.split("\n").length : 0}</span>`).join("") + (r.calories ? `<span class="dchip note">${esc(r.calories)}</span>` : "") + (r.macros ? `<span class="dchip note">Macros</span>` : "") + (r.notes ? `<span class="dchip note">Indicaciones</span>` : "")
+        : `<span class="small" style="color:var(--warn)">No se detectan comidas. Escribe «Desayuno», «Comida», «Cena»… en su propio renglón.</span>`;
+    }
+  };
+  ta.addEventListener("input", preview);
+  $("[data-split]", c).onclick = () => {
+    if (!ta.value.trim()) return toast("Escribe el plan primero", "err");
+    toast(apply(ta.value, "auto", $("[data-append]", c).checked ? "append" : "replace") + " Revisa y presiona «Guardar y notificar».");
+    $("[data-f]", c).scrollIntoView({ behavior: "smooth" });
+  };
+
+  // PDF
+  const reload = () => CTABS[kind === "routine" ? "rutina" : "dieta"](c, null, m).then(() => enhance(c));
+  if (d?.pdf) mountPdfViewer($("[data-pdf-box]", c), { memberId: m.id, kind, meta: d.pdf, title: kind === "routine" ? "rutina" : "dieta" });
+  $("[data-pdf-file]", c).onchange = async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    toast("Subiendo PDF…", "info");
+    try {
+      await uploadPlanPdf(m.id, kind, file, d?.pdf);
+      notify(m.id, kind === "routine" ? "Nueva rutina en PDF" : "Nueva dieta en PDF", "Tu coach subió tu plan en PDF. Ábrelo en la app.", kind === "routine" ? "rutina" : "dieta");
+      toast("PDF guardado"); reload();
+    } catch (err) { console.error(err); toast(err.message || "No se pudo subir el PDF", "err"); }
+  };
+  $("[data-pdf-del]", c)?.addEventListener("click", async () => {
+    if (!(await confirmDialog("¿Quitar el PDF del plan?", "Quitar"))) return;
+    await removePlanPdf(m.id, kind, d.pdf); toast("PDF eliminado"); reload();
+  });
+}
 
 /* ---------- Importar / exportar rutina y dieta ---------- */
 function planToolbar(tpls) {
@@ -1199,4 +1275,37 @@ function csv(name, head, rows) {
   const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
   const blob = new Blob(["﻿" + [head, ...rows].map((r) => r.map(q).join(",")).join("\n")], { type: "text/csv;charset=utf-8" });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `${name}.csv`; a.click();
+}
+
+/* ---------- Confirmación de asistencia ---------- */
+// Citas de la mañana que no confirmaron antes de la hora límite: se libera el lugar
+async function releaseSweep(S) {
+  let released = 0;
+  for (const r of S.reservations.filter((x) => shouldRelease(x))) {
+    try { if (await releaseReservation(r)) released++; } catch (e) { console.warn("release", e); }
+  }
+  if (released) toast(`${released} cita(s) liberada(s) por no confirmar asistencia`, "info");
+}
+function attChip(r) {
+  if (r.status === "cancelada" && r.cancelReason === "Sin confirmación") return `<span class="chip-mini err block-chip">Liberada: no confirmó</span>`;
+  if (!["pendiente", "confirmada"].includes(r.status)) return "";
+  if (r.attendanceConfirmed) return `<span class="chip-mini att block-chip">✓ Asistencia confirmada</span>`;
+  if (needsConfirmation(r)) return `<span class="chip-mini warn block-chip">Esperando confirmación</span>`;
+  return "";
+}
+
+/** Libera una cita no confirmada (misma lógica que la Cloud Function) */
+async function releaseReservation(r) {
+  const ok = await runTransaction(db, async (tx) => {
+    const rRef = doc(db, "reservations", r.id);
+    const cur = await tx.get(rRef);
+    if (!cur.exists() || !shouldRelease({ id: r.id, ...cur.data() })) return false;
+    const sRef = doc(db, "slots", slotId(r.date, r.className, r.time));
+    const s = await tx.get(sRef);
+    if (s.exists() && s.data().n > 0) tx.update(sRef, { n: s.data().n - 1 });
+    tx.update(rRef, { status: "cancelada", cancelReason: "Sin confirmación", cancelledAt: serverTimestamp() });
+    return true;
+  });
+  if (ok && r.memberId) notify(r.memberId, "Cita liberada", `Tu cita de ${r.className} (${fmtDate(r.date)} ${fmtTime(r.time)}) se liberó porque no confirmaste asistencia.`, "reserva");
+  return ok;
 }

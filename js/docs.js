@@ -262,9 +262,10 @@ export function parseRoutine(text) {
     const n = line.match(NOTES_RX);
     if (n) { cur = null; const rest = line.slice(n[0].length).trim(); if (rest) notes.push(rest); return; }
     const clean = line.replace(/^[•*\-–]\s*/, "");
+    if (cur && /^(descanso|rest|off|libre)\.?$/i.test(clean)) { days[cur] ||= []; return; } // día de descanso = vacío
     if (cur) (days[cur] ||= []).push(clean); else notes.push(clean);
   });
-  return { found, days: Object.fromEntries(Object.entries(days).map(([k, v]) => [k, v.join("\n")])), notes: notes.join("\n") };
+  return { found, days: Object.fromEntries(Object.entries(days).filter(([, v]) => v.length).map(([k, v]) => [k, v.join("\n")])), notes: notes.join("\n") };
 }
 
 const MEAL_RX = /^\s*[*#\-•\s]*(desayuno|colaci[oó]n(?:\s*\d)?|media\s+ma[nñ]ana|almuerzo|comida\s*\d|comida|merienda|cena|snack(?:\s*\d)?|pre[\s-]?entreno|post[\s-]?entreno|antes de dormir)\b\s*[:.\-–—)]?\s*/i;

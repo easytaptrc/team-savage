@@ -1,6 +1,7 @@
 // 2. RESERVA — formulario, calendario, hora y objetivo → pase (wallet)
 import { db, doc, getDocs, collection, query, where, runTransaction, serverTimestamp } from "../firebase.js";
 import { ageOf } from "../metrics.js";
+import { skipConfirmAtBooking, schedule, POLICY, notifState, enableNotifications } from "../reminders.js";
 
 // Un documento por fecha + servicio + hora: { date, key, n } (n = lugares ocupados)
 export const slotKey = (cls, time) => `${cls}__${time}`;
@@ -150,6 +151,9 @@ export function mountReservaForm(host, { member = null, onDone } = {}) {
       name, phone, referredBy: form.ref?.value.trim() || "", className: state.cls,
       date: state.date, time: state.time, goal: form.goal.value.trim(), status: member ? "confirmada" : "pendiente", ...extra,
     };
+    // Si reservó después de la hora de confirmación (ej. a las 9 pm para mañana temprano) no se le pide confirmar
+    if (skipConfirmAtBooking(r)) r.skipConfirm = true;
+    try { const tk = localStorage.getItem("ts_push_token"); if (tk) r.pushToken = tk; } catch {}
     try {
       await runTransaction(db, async (tx) => {
         const sRef = doc(db, "slots", slotId(state.date, state.cls, state.time));
@@ -186,6 +190,8 @@ export function showPass(host, r, onDone) {
     <h2 class="title sm">¡Reserva ${r.status === "confirmada" ? "confirmada" : "recibida"}!</h2>
     <p class="subtitle">${r.status === "confirmada" ? "Aquí está tu pase de acceso" : "Tu coach la confirmará pronto. Guarda tu pase."}</p>
     ${passHTML(r)}
+    <div class="remind-info">${icon("bell")}<span>${reminderText(r)}</span></div>
+    ${notifState() === "default" ? `<button class="btn btn-ghost w100 mt-s" data-notif>${icon("bell")} Activar notificaciones para mis recordatorios</button>` : ""}
     <div class="stack mt">
       <button class="btn btn-metal w100 lg" data-save>${icon("wallet")} Guardar en wallet</button>
       <div class="btn-row">
@@ -199,4 +205,12 @@ export function showPass(host, r, onDone) {
   $("[data-save]", host).onclick = () => downloadPass($(".pass", host), `pase-${r.code}`);
   $("[data-ics]", host).onclick = () => icsFor(r);
   $("[data-back]", host).onclick = () => (onDone ? onDone() : (location.hash = "#/"));
+  $("[data-notif]", host)?.addEventListener("click", async (e) => { if (await enableNotifications(r.memberId ? `member:${r.memberId}` : "device")) e.currentTarget.remove(); });
+}
+
+function reminderText(r) {
+  if (r.skipConfirm) return "Tu lugar ya está apartado. Te esperamos.";
+  return schedule(r).kind === "confirm"
+    ? `Un día antes a las ${POLICY.confirmAt}:00 h te pediremos confirmar tu asistencia. Si no confirmas antes de las ${POLICY.releaseAt}:00 h, tu lugar se libera.`
+    : `El día de tu cita a las ${POLICY.dayOfAt}:00 am te enviaremos un recordatorio.`;
 }

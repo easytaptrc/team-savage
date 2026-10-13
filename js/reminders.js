@@ -11,8 +11,13 @@ export const POLICY = {
   dayOfAt: 8,          // citas de la tarde: aviso a las 8:00 am del mismo día
 };
 
-const at = (dateStr, h, m = 0) => { const d = parseYmd(dateStr); d.setHours(h, m, 0, 0); return d; };
+// Horas SIEMPRE en hora de Torreón (UTC-6, sin horario de verano), igual que el servidor,
+// aunque el teléfono tenga otra zona horaria.
+const UTC_OFFSET = "-06:00";
+const pad2 = (n) => String(n).padStart(2, "0");
+const at = (dateStr, h, m = 0) => new Date(`${dateStr}T${pad2(h)}:${pad2(m)}:00${UTC_OFFSET}`);
 const dayBefore = (dateStr) => { const d = parseYmd(dateStr); d.setDate(d.getDate() - 1); return ymd(d); };
+const createdOf = (r) => (r.createdAt?.toDate ? r.createdAt.toDate() : r.createdAt ? new Date(r.createdAt) : null);
 export const startOf = (r) => { const [h, m] = r.time.split(":").map(Number); return at(r.date, h, m); };
 export const isMorning = (r) => r.time < POLICY.morningEnd;
 
@@ -40,11 +45,16 @@ export function needsConfirmation(r, now = new Date()) {
   return s.kind === "confirm" && now >= s.first && now < startOf(r);
 }
 
-/** ¿Ya venció la confirmación y la cita debe liberarse? */
+/** ¿Ya venció la confirmación y la cita debe liberarse?
+ *  Solo si: se le enviaron los 2 avisos, ya pasó la hora límite y la cita AÚN no ocurre.
+ *  (Nunca toca citas pasadas ni citas de antes de que existieran los recordatorios.) */
 export function shouldRelease(r, now = new Date()) {
   if (!active(r) || r.attendanceConfirmed || r.skipConfirm) return false;
   const s = schedule(r);
-  return s.kind === "confirm" && now >= s.release;
+  if (s.kind !== "confirm") return false;
+  const created = createdOf(r);
+  if (created && created >= s.first) return false;
+  return (r.confirmReminders || 0) >= 2 && now >= s.release && now < startOf(r);
 }
 
 export function confirmText(r) {
@@ -95,14 +105,17 @@ export async function enableNotifications(owner = "device") {
   try { localStorage.setItem("ts_notif_prompted", "1"); } catch {}
   if (p !== "granted") { toast("No se activaron las notificaciones", "err"); return false; }
   const token = await registerPush(owner);
-  if (token) {
-    try { localStorage.setItem("ts_push_token", token); } catch {}
-    // Liga el dispositivo a las reservas que ya hizo sin cuenta
-    try {
-      const list = JSON.parse(localStorage.getItem("ts_passes") || "[]");
-      await Promise.all(list.filter((r) => r.date >= ymd()).map((r) => updateDoc(doc(db, "reservations", r.code), { pushToken: token }).catch(() => {})));
-    } catch {}
+  if (!token) {
+    // Hay permiso pero el dispositivo no quedó registrado: los avisos con la app cerrada no llegarían
+    toast("No se pudo registrar este dispositivo para avisos con la app cerrada. Revisa tu conexión e inténtalo de nuevo.", "err");
+    return false;
   }
+  try { localStorage.setItem("ts_push_token", token); } catch {}
+  // Liga el dispositivo a las reservas que ya hizo sin cuenta
+  try {
+    const list = JSON.parse(localStorage.getItem("ts_passes") || "[]");
+    await Promise.all(list.filter((r) => r.date >= ymd()).map((r) => updateDoc(doc(db, "reservations", r.code), { pushToken: token }).catch(() => {})));
+  } catch {}
   toast("¡Notificaciones activadas! Te recordaremos tus citas.");
   return true;
 }

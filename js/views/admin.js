@@ -499,7 +499,7 @@ const SECTIONS = {
         <tbody>${list.map((r) => `<tr>
           <td>${fmtDate(r.date)}</td><td class="mono">${fmtTime(r.time)}</td>
           <td><b>${r.memberId ? `<a href="#/admin/cliente/${r.memberId}">${esc(r.name)}</a>` : esc(r.name)}</b><small class="block muted">${esc(r.phone)}${r.age != null ? ` · ${r.age} años` : ""}${r.referredBy ? ` · Ref: ${esc(r.referredBy)}` : ""}</small>${r.email || r.emergencyPhone ? `<small class="block muted">${esc(r.email || "")}${r.emergencyPhone ? ` · Emerg. ${esc(r.emergencyPhone)}` : ""}</small>` : ""}</td>
-          <td>${esc(r.className)}</td><td class="muted small">${esc(r.goal || "—")}</td><td>${statusChip(r.status)}</td>
+          <td>${esc(r.className)}</td><td class="muted small">${esc(r.goal || "—")}</td><td>${statusChip(r.status)}${attChip(r)}</td>
           <td class="actions">
             ${r.status === "pendiente" ? `<button class="icon-btn sm" data-a="ok" data-id="${r.id}" title="Confirmar">${icon("check")}</button>` : ""}
             ${["pendiente", "confirmada"].includes(r.status) ? `<button class="icon-btn sm" data-a="done" data-id="${r.id}" title="Asistió">${icon("flame")}</button>` : ""}

@@ -689,3 +689,58 @@ td.delta.up { color: var(--ok); } td.delta.down { color: var(--err); }
 .pdfv-page { width: 100%; height: auto; border-radius: 4px; box-shadow: 0 6px 18px rgba(0,0,0,.5); background: #fff; }
 .pdfv.full { position: fixed; inset: 0; z-index: 70; padding: max(12px, env(safe-area-inset-top)) 12px 12px; background: #000; }
 .pdfv.full .pdfv-pages { max-height: none; height: 100%; }
+
+/* ---------- Guía de instalación ---------- */
+.cover-install { position: absolute; z-index: 3; top: max(14px, env(safe-area-inset-top)); left: 14px; height: 42px; padding: 0 16px 0 12px; display: flex; align-items: center; gap: 8px;
+  border-radius: 99px; border: 1px solid rgba(255,255,255,.35); background: rgba(0,0,0,.45); color: #eee; cursor: pointer; font: 500 11px var(--font); letter-spacing: .14em; text-transform: uppercase;
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); animation: coverUp .8s 1.2s both; transition: border-color .3s; }
+.cover-install .ic { width: 17px; height: 17px; }
+.cover-install:hover { border-color: #fff; }
+.ig-modal { width: min(100%, 420px); }
+.ig-head { display: flex; gap: 12px; align-items: center; margin-bottom: 14px; padding-right: 28px; }
+.ig-head img { width: 48px; height: 48px; border-radius: 12px; }
+.ig-head b { display: block; font: 600 18px var(--display); text-transform: uppercase; letter-spacing: .04em; }
+.ig-head small { color: var(--muted); font-size: 12px; }
+.ig-step { display: grid; gap: 14px; justify-items: center; animation: viewIn .45s var(--ease) both; }
+.ig-text { text-align: center; display: grid; gap: 6px; }
+.ig-num { font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); }
+.ig-title { display: flex; gap: 8px; align-items: center; justify-content: center; font-size: 16px; }
+.ig-ic { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; background: var(--metal); color: var(--on-metal); flex: none; }
+.ig-ic .ic { width: 18px; height: 18px; }
+.ig-text p { margin: 0; font-size: 13.5px; color: #c9c9c9; line-height: 1.5; }
+.ig-dots { display: flex; justify-content: center; gap: 6px; margin-top: 14px; }
+.ig-dots button { width: 8px; height: 8px; border-radius: 99px; border: 0; background: var(--line-2); cursor: pointer; transition: width .3s, background .3s; padding: 0; }
+.ig-dots button.on { width: 22px; background: var(--accent); }
+/* Teléfono de demostración */
+.ig-phone { width: 150px; height: 230px; border-radius: 26px; padding: 7px; background: linear-gradient(160deg, #3a3a3a, #111); box-shadow: 0 20px 40px -15px #000, inset 0 0 0 1px rgba(255,255,255,.15); }
+.ig-screen { position: relative; width: 100%; height: 100%; border-radius: 20px; overflow: hidden; background: url("../assets/fondo.jpg") center top / cover, #000; }
+.ig-screen::before { content: ""; position: absolute; inset: 0; background: rgba(0,0,0,.35); }
+.ig-bar { position: absolute; left: 0; right: 0; height: 26px; display: flex; align-items: center; justify-content: space-around; background: rgba(245,245,245,.95); color: #1b6ef3; z-index: 1; }
+.ig-bar.bottom { bottom: 0; } .ig-bar.top { top: 0; justify-content: space-between; padding: 0 8px; color: #333; }
+.ig-bar .ic { width: 15px; height: 15px; }
+.ig-bar span { min-width: 15px; }
+.ig-url { font-size: 8.5px; color: #555; background: #e2e2e2; padding: 2px 8px; border-radius: 6px; }
+.hl-share, .hl-dots, .hl-url { animation: igPulse 1.4s ease-in-out infinite; border-radius: 6px; }
+@keyframes igPulse { 50% { box-shadow: 0 0 0 4px rgba(27,110,243,.35); background: rgba(27,110,243,.12); } }
+.ig-tap { position: absolute; z-index: 3; width: 22px; height: 22px; border-radius: 50%; background: rgba(255,255,255,.85); box-shadow: 0 0 0 3px rgba(0,0,0,.25); animation: igTap 1.6s ease-in-out infinite; }
+.ig-tap.at-share { bottom: 3px; left: calc(37.5% - 11px); }
+.ig-tap.at-dots { top: 2px; right: 4px; }
+.ig-tap.at-menu { top: 86px; left: 60%; } .ig-tap.at-menu.from-bottom { top: auto; bottom: 66px; }
+.ig-tap.at-add { bottom: 62px; right: 22px; }
+@keyframes igTap { 0%, 100% { transform: scale(1); opacity: .9; } 50% { transform: scale(.7); opacity: 1; } }
+.ig-menu { position: absolute; z-index: 2; right: 6px; top: 30px; width: 112px; border-radius: 10px; background: #fff; color: #222; font-size: 8.5px; overflow: hidden; box-shadow: 0 8px 20px rgba(0,0,0,.4); animation: igIn .5s .2s both; }
+.ig-menu.from-bottom { top: auto; bottom: 30px; left: 6px; right: 6px; width: auto; }
+.ig-menu div { padding: 7px 9px; border-bottom: 1px solid #eee; }
+.ig-menu div.hl { background: #e8f0fe; font-weight: 700; color: #1b6ef3; }
+@keyframes igIn { from { opacity: 0; transform: translateY(8px) scale(.96); } }
+.ig-dialog { position: absolute; z-index: 2; left: 10px; right: 10px; bottom: 40px; border-radius: 14px; background: #fff; color: #222; padding: 12px 10px 8px; display: grid; justify-items: center; gap: 2px; animation: igIn .5s both; }
+.ig-dialog img { width: 34px; height: 34px; border-radius: 8px; } .ig-dialog b { font-size: 10px; } .ig-dialog span { font-size: 8px; color: #888; }
+.ig-btns { display: flex; justify-content: space-between; width: 100%; margin-top: 6px; font-size: 9px; }
+.ig-btns em { font-style: normal; color: #888; } .ig-btns strong { color: #1b6ef3; }
+.ig-home { position: absolute; inset: 0; z-index: 1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px 8px; padding: 22px 10px; align-content: start; background: linear-gradient(160deg, #2a2a2a, #0b0b0b); }
+.ig-home > i { aspect-ratio: 1; border-radius: 8px; background: rgba(255,255,255,.12); }
+.ig-app { display: grid; justify-items: center; gap: 2px; min-width: 0; animation: igPop .7s .3s cubic-bezier(.34,1.56,.64,1) both; }
+.ig-app img { width: 100%; aspect-ratio: 1; border-radius: 8px; box-shadow: 0 0 0 2px #fff, 0 0 14px rgba(255,255,255,.5); }
+.ig-app small { font-size: 5.5px; color: #fff; white-space: nowrap; overflow: hidden; max-width: 140%; text-align: center; }
+@keyframes igPop { from { transform: scale(0); } }
+.ig-toast { position: absolute; z-index: 2; left: 50%; bottom: 20px; translate: -50% 0; background: #222; color: #fff; font-size: 9px; padding: 6px 10px; border-radius: 99px; animation: igIn .5s .3s both; }

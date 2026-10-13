@@ -1,5 +1,10 @@
 // 1. INDEX — portada minimalista: imagen de fondo, RESERVA, TEAM y redes
 import { CONFIG, icon, esc } from "../ui.js";
+import { installCTA, bindInstallCTA } from "../install.js";
+import { auth, isAdminUser, memberIdFromEmail } from "../firebase.js";
+
+// Si hay sesión, el dispositivo se registra a nombre del socio/admin (no como "device"), para no perder sus avisos
+const ownerNow = () => { const u = auth.currentUser; return !u ? "device" : isAdminUser(u) ? "admin" : `member:${memberIdFromEmail(u.email)}`; };
 import { needsConfirmation, confirmBannerHTML, bindConfirmBanners, notifState, enableNotifications, maybePromptNotifications } from "../reminders.js";
 
 export async function render(root) {
@@ -19,6 +24,7 @@ export async function render(root) {
     <div class="cover-col">
       <div class="cover-media" aria-hidden="true"><img src="${cover}" alt="" fetchpriority="high"></div>
       <button class="cover-bell" data-bell aria-label="Notificaciones">${icon("bell")}<i></i></button>
+      ${installCTA()}
       ${pending.length ? `<div class="cover-alerts">${pending.map(confirmBannerHTML).join("")}</div>` : ""}
       <div class="cover-content">
         <a href="#/reserva" class="pill pill-main">
@@ -37,7 +43,6 @@ export async function render(root) {
           <i class="foot-line"></i>
         </footer>
         <div class="cover-extra">
-          <button class="cover-link install-only" onclick="installApp()">Instalar app</button>
           <a href="#/admin" class="cover-link coach">Acceso coach</a>
         </div>
       </div>
@@ -49,13 +54,14 @@ export async function render(root) {
   const paint = () => { const s = notifState(); bell.classList.toggle("on", s === "granted"); bell.classList.toggle("ask", s === "default"); };
   paint();
   bell.onclick = async () => {
-    if (notifState() === "granted") { enableNotifications("device"); return; } // re-registra el dispositivo por si cambió
-    await enableNotifications("device"); paint();
+    if (notifState() === "granted") { enableNotifications(ownerNow()); return; } // re-registra el dispositivo por si cambió
+    await enableNotifications(ownerNow()); paint();
   };
   const onChange = () => paint();
   document.addEventListener("ts-notif-change", onChange);
   bindConfirmBanners(root);
-  maybePromptNotifications("device");
+  bindInstallCTA(root);
+  maybePromptNotifications(ownerNow());
   return { destroy: () => document.removeEventListener("ts-notif-change", onChange) };
 }
 

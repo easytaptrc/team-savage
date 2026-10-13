@@ -73,5 +73,20 @@ if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch((e) => console.warn("SW", e)));
 }
 let deferredInstall = null;
-window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); deferredInstall = e; document.body.classList.add("can-install"); });
-window.installApp = async () => { if (!deferredInstall) return; deferredInstall.prompt(); deferredInstall = null; document.body.classList.remove("can-install"); };
+window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); deferredInstall = e; window.__deferredInstall = e; document.body.classList.add("can-install"); });
+window.addEventListener("appinstalled", () => { deferredInstall = null; window.__deferredInstall = null; document.body.classList.remove("can-install"); document.querySelector("[data-install]")?.remove(); });
+window.installApp = async () => {
+  if (!deferredInstall) { const m = await import("./install.js"); m.showInstallGuide(); return; }
+  deferredInstall.prompt(); deferredInstall = null; window.__deferredInstall = null; document.body.classList.remove("can-install");
+};
+
+// Confirmación hecha desde el botón de la notificación: actualiza el pase guardado y quita la tarjeta
+navigator.serviceWorker?.addEventListener("message", (e) => {
+  if (e.data?.type !== "ts-confirmed") return;
+  try {
+    const list = JSON.parse(localStorage.getItem("ts_passes") || "[]");
+    list.forEach((p) => { if (p.code === e.data.code) p.attendanceConfirmed = true; });
+    localStorage.setItem("ts_passes", JSON.stringify(list));
+  } catch {}
+  document.querySelectorAll(`[data-confirm-code="${CSS.escape(e.data.code)}"]`).forEach((el) => el.remove());
+});

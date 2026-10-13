@@ -214,7 +214,7 @@ const SECTIONS = {
       ${d.notes ? `<div class="card reveal mt"><h4>Notas</h4><p class="pre muted">${esc(d.notes)}</p></div>` : ""}
       <div class="btn-row mt reveal"><button class="btn btn-ghost" data-pdf>${icon("download")} Descargar PDF</button><button class="btn btn-ghost" data-xlsx>${icon("download")} Excel</button></div>`;
     if (d?.pdf) { C.insertAdjacentHTML("afterbegin", `<div class="card reveal mb-s" data-pdfview></div>`); mountPdfViewer($("[data-pdfview]", C), { memberId: S.id, kind: "routine", meta: d.pdf, title: "rutina" }); }
-    $("[data-day]", C).forEach((b) => (b.onclick = () => pick(b.dataset.day)));
+    $$("[data-day]", C).forEach((b) => (b.onclick = () => pick(b.dataset.day)));
     $("[data-pdf]", C).onclick = () => exportPlan("pdf", "routine", d, S.member);
     $("[data-xlsx]", C).onclick = () => exportPlan("xlsx", "routine", d, S.member);
     pick(days.includes(todayKey) ? todayKey : days[0]);

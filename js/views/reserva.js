@@ -205,7 +205,7 @@ export function showPass(host, r, onDone) {
   $("[data-save]", host).onclick = () => downloadPass($(".pass", host), `pase-${r.code}`);
   $("[data-ics]", host).onclick = () => icsFor(r);
   $("[data-back]", host).onclick = () => (onDone ? onDone() : (location.hash = "#/"));
-  $("[data-notif]", host)?.addEventListener("click", async (e) => { if (await enableNotifications(r.memberId ? `member:${r.memberId}` : "device")) e.currentTarget.remove(); });
+  $("[data-notif]", host)?.addEventListener("click", async (e) => { const btn = e.currentTarget; if (await enableNotifications(r.memberId ? `member:${r.memberId}` : "device")) btn.remove(); });
 }
 
 function reminderText(r) {

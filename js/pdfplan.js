@@ -12,7 +12,8 @@ const toBase64 = (buf) => {
   return btoa(bin);
 };
 const fromBase64 = (b64) => { const bin = atob(b64); const out = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out; };
-const partRef = (memberId, kind, i) => doc(db, "members", memberId, "planfiles", `${kind}_${i}`);
+// Cada versión del PDF usa sus propias partes (kind_ver_i): si una subida falla, el PDF anterior sigue intacto
+const partRef = (memberId, kind, i, ver) => doc(db, "members", memberId, "planfiles", ver ? `${kind}_${ver}_${i}` : `${kind}_${i}`);
 const planRef = (memberId, kind) => doc(db, "members", memberId, "plan", kind);
 
 /** Sube el PDF (reemplaza el anterior). kind: "routine" | "diet" */
@@ -21,20 +22,22 @@ export async function uploadPlanPdf(memberId, kind, file, prev) {
   if (file.size > MAX_PDF_MB * 1024 * 1024) throw new Error(`El PDF pesa más de ${MAX_PDF_MB} MB. Comprímelo (ej. ilovepdf.com) y vuelve a intentar.`);
   const b64 = toBase64(await file.arrayBuffer());
   const parts = Math.ceil(b64.length / CHUNK);
-  for (let i = 0; i < parts; i++) await setDoc(partRef(memberId, kind, i), { data: b64.slice(i * CHUNK, (i + 1) * CHUNK), i });
-  for (let i = parts; i < (prev?.chunks || 0); i++) await deleteDoc(partRef(memberId, kind, i)).catch(() => {});
-  const meta = { name: file.name, size: file.size, chunks: parts, uploadedAt: serverTimestamp() };
+  const ver = Date.now().toString(36);
+  for (let i = 0; i < parts; i++) await setDoc(partRef(memberId, kind, i, ver), { data: b64.slice(i * CHUNK, (i + 1) * CHUNK), i });
+  const meta = { name: file.name, size: file.size, chunks: parts, ver, uploadedAt: serverTimestamp() };
   await setDoc(planRef(memberId, kind), { pdf: meta, updatedAt: serverTimestamp() }, { merge: true });
+  // Ya con el nuevo activo, se borran las partes del anterior
+  for (let i = 0; i < (prev?.chunks || 0); i++) await deleteDoc(partRef(memberId, kind, i, prev.ver)).catch(() => {});
   return meta;
 }
 
 export async function removePlanPdf(memberId, kind, meta) {
-  for (let i = 0; i < (meta?.chunks || 0); i++) await deleteDoc(partRef(memberId, kind, i)).catch(() => {});
   await setDoc(planRef(memberId, kind), { pdf: null, updatedAt: serverTimestamp() }, { merge: true });
+  for (let i = 0; i < (meta?.chunks || 0); i++) await deleteDoc(partRef(memberId, kind, i, meta.ver)).catch(() => {});
 }
 
 export async function loadPlanPdf(memberId, kind, meta) {
-  const parts = await Promise.all(Array.from({ length: meta.chunks }, (_, i) => getDoc(partRef(memberId, kind, i))));
+  const parts = await Promise.all(Array.from({ length: meta.chunks }, (_, i) => getDoc(partRef(memberId, kind, i, meta.ver))));
   const b64 = parts.map((p) => p.data()?.data || "").join("");
   return new Blob([fromBase64(b64)], { type: "application/pdf" });
 }
@@ -47,7 +50,8 @@ export async function mountPdfViewer(host, { memberId, kind, meta, title = "Plan
     <div class="pdfv-pages" data-pages><div class="center pad"><span class="spinner"></span> Cargando PDF…</div></div></div>`;
   try {
     const blob = await loadPlanPdf(memberId, kind, meta);
-    const url = URL.createObjectURL(blob);
+    if (host.__pdfUrl) URL.revokeObjectURL(host.__pdfUrl);
+    const url = (host.__pdfUrl = URL.createObjectURL(blob));
     const dl = host.querySelector("[data-dl]"); dl.href = url; dl.download = meta.name || `${title}.pdf`;
     host.querySelector("[data-full]").onclick = () => host.querySelector(".pdfv").classList.toggle("full");
     await loadScript("pdfjs");

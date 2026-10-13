@@ -1,7 +1,7 @@
 // Service Worker: caché offline + notificaciones push (FCM)
-const CACHE = "ts-v5";
+const CACHE = "ts-v7";
 const ASSETS = [
-  "./", "index.html", "css/styles.css", "js/app.js", "js/ui.js", "js/firebase.js", "js/metrics.js", "js/docs.js", "js/reminders.js", "js/pdfplan.js",
+  "./", "index.html", "css/styles.css", "js/app.js", "js/ui.js", "js/firebase.js", "js/metrics.js", "js/docs.js", "js/reminders.js", "js/pdfplan.js", "js/install.js",
   "js/views/home.js", "js/views/reserva.js", "js/views/pases.js", "js/views/team.js", "js/views/client.js", "js/views/admin.js",
   "assets/logo.jpg", "assets/fondo.jpg", "assets/icon-192.png", "assets/icon-512.png", "assets/apple-touch-icon.png", "manifest.json",
 ];
@@ -53,19 +53,30 @@ async function confirmFromNotification(code) {
   if (!res.ok) throw new Error("HTTP " + res.status);
 }
 
+// Enfoca una ventana de la app y la lleva a la ruta; si no hay (o falla), abre una nueva
+async function openOrFocus(target) {
+  const cs = await self.clients.matchAll({ type: "window" }); // solo ventanas que controla este SW
+  const c = cs[0];
+  if (c) {
+    try { const nc = await c.navigate(target); return (nc || c).focus(); }
+    catch { /* sigue abajo */ }
+  }
+  return self.clients.openWindow(target);
+}
+
 self.addEventListener("notificationclick", (e) => {
   e.notification.close();
   const { link, code, confirm } = e.notification.data || {};
+  const target = confirm && code ? `./#/confirmar/${encodeURIComponent(code)}` : link || "./";
   if (e.action === "confirm" && code) {
     e.waitUntil(confirmFromNotification(code)
-      .then(() => self.registration.showNotification("¡Asistencia confirmada!", { body: "Te esperamos. 💪", icon: "assets/icon-192.png", badge: "assets/icon-96.png", tag: `res-${code}` }))
-      .catch(() => self.clients.openWindow(`./#/confirmar/${encodeURIComponent(code)}`)));
+      .then(async () => {
+        // Avisa a la app abierta para que quite la tarjeta "Confirma tu asistencia"
+        (await self.clients.matchAll({ type: "window" })).forEach((c) => c.postMessage({ type: "ts-confirmed", code }));
+        return self.registration.showNotification("¡Asistencia confirmada!", { body: "Te esperamos. 💪", icon: "assets/icon-192.png", badge: "assets/icon-96.png", tag: `res-${code}` });
+      })
+      .catch(() => openOrFocus(target)));
     return;
   }
-  const target = confirm && code ? `./#/confirmar/${encodeURIComponent(code)}` : link || "./";
-  e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((cs) => {
-    const c = cs.find((x) => "focus" in x);
-    if (c) { c.navigate?.(target).catch(() => {}); return c.focus(); }
-    return self.clients.openWindow(target);
-  }));
+  e.waitUntil(openOrFocus(target));
 });

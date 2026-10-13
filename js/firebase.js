@@ -22,7 +22,7 @@ export const firebaseConfig = {
 
 // Clave VAPID para notificaciones push (Firebase Console → Configuración del proyecto →
 // Cloud Messaging → Certificados push web → Generar par de claves). Vacía = solo notificaciones en la app.
-export const VAPID_KEY = "";
+export const VAPID_KEY = "BHqvOw-W1mSdcFnEpmZmbBPN5aTREq6-2-bnAEb6mqxTJYeBBU1IUhv-_QUugGoCXzUginrVFPPW5KZqzSXgQYw";
 
 // Dominio interno para convertir usuario/ID en correo de Firebase Auth (no se envían correos).
 export const AUTH_DOMAIN = "teamsavage.app";

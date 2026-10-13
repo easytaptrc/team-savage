@@ -16,6 +16,7 @@ import {
 } from "../metrics.js";
 import { exportPlan, DAYS_ORDER, DAY_LABEL } from "../docs.js";
 import { mountPdfViewer } from "../pdfplan.js";
+import { mountWalletButtons } from "../wallet.js";
 import { needsConfirmation, confirmBannerHTML, bindConfirmBanners, maybePromptNotifications, enableNotifications } from "../reminders.js";
 
 const TABS = [
@@ -139,14 +140,14 @@ const SECTIONS = {
     const L = $("[data-l]", el);
     L.innerHTML = `${up.filter((r) => needsConfirmation(r)).map(confirmBannerHTML).join("")}${up.length ? up.map((r) => `<div class="reveal">${passHTML(r)}
         ${r.attendanceConfirmed ? `<p class="small center mt-s" style="color:var(--ok)">${icon("check")} Asistencia confirmada</p>` : ""}
-        <div class="btn-row mt-s"><button class="btn btn-ghost w100" data-dl="${r.id}">${icon("download")} Guardar</button>
-        <button class="btn btn-ghost danger w100" data-cancel="${r.id}">${icon("x")} Cancelar</button></div></div>`).join("")
+        <div class="wallet-box mt-s" data-wallet="${r.id}"></div>
+        <button class="btn btn-ghost danger w100 mt-s" data-cancel="${r.id}">${icon("x")} Cancelar reserva</button></div>`).join("")
       : `<div class="card center muted reveal">No tienes reservas próximas<br><a class="btn btn-metal mt" href="#/app/reservar">Reservar ahora</a></div>`}
       ${past.length ? `<h3 class="h3 mt">Historial</h3><div class="card list reveal">${past.slice(0, 30).map((r) => `
         <div class="li"><div><b>${esc(r.className)}</b><small>${fmtDate(r.date)} · ${fmtTime(r.time)}</small></div>${chip(r.status, r.date < today)}</div>`).join("")}</div>` : ""}`;
     enhance(L);
     bindConfirmBanners(L);
-    $$("[data-dl]", L).forEach((b) => (b.onclick = () => downloadPass(b.closest(".reveal").querySelector(".pass"), `pase-${b.dataset.dl}`)));
+    $("[data-wallet]", L).forEach((box) => mountWalletButtons(box, list.find((x) => x.id === box.dataset.wallet), box.closest(".reveal").querySelector(".pass")));
     $$("[data-cancel]", L).forEach((b) => (b.onclick = async () => {
       const r = list.find((x) => x.id === b.dataset.cancel);
       if (!(await confirmDialog("¿Cancelar esta reserva?", "Sí, cancelar"))) return;

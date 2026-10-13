@@ -744,3 +744,15 @@ td.delta.up { color: var(--ok); } td.delta.down { color: var(--err); }
 .ig-app small { font-size: 5.5px; color: #fff; white-space: nowrap; overflow: hidden; max-width: 140%; text-align: center; }
 @keyframes igPop { from { transform: scale(0); } }
 .ig-toast { position: absolute; z-index: 2; left: 50%; bottom: 20px; translate: -50% 0; background: #222; color: #fff; font-size: 9px; padding: 6px 10px; border-radius: 99px; animation: igIn .5s .3s both; }
+
+/* ---------- Botones de Wallet ---------- */
+.wallet-box { display: grid; gap: 8px; justify-items: center; }
+.wallet-btn { display: inline-flex; align-items: center; gap: 10px; min-width: 210px; height: 50px; padding: 0 18px; border-radius: 12px; background: #000; color: #fff;
+  border: 1px solid rgba(255,255,255,.45); text-decoration: none; transition: border-color .2s, transform .15s; }
+.wallet-btn:hover { border-color: #fff; } .wallet-btn:active { transform: scale(.98); }
+.wallet-btn .ic { width: 26px; height: 26px; flex: none; }
+.wallet-btn span { display: grid; line-height: 1.1; font: 600 17px var(--font); text-align: left; }
+.wallet-btn small { font: 400 10.5px var(--font); color: #ccc; }
+.wcfg-sec { display: grid; gap: 10px; padding: 12px; margin: 10px 0; border: 1px solid var(--line); border-radius: var(--r-s); }
+.wcfg-sec details summary { cursor: pointer; color: var(--text); }
+.wallet-cfg { grid-column: 1 / -1; }

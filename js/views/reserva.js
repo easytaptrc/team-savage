@@ -1,6 +1,7 @@
 // 2. RESERVA — formulario, calendario, hora y objetivo → pase (wallet)
 import { db, doc, getDocs, collection, query, where, runTransaction, serverTimestamp } from "../firebase.js";
 import { ageOf } from "../metrics.js";
+import { mountWalletButtons } from "../wallet.js";
 import { skipConfirmAtBooking, schedule, POLICY, notifState, enableNotifications } from "../reminders.js";
 
 // Un documento por fecha + servicio + hora: { date, key, n } (n = lugares ocupados)
@@ -193,7 +194,7 @@ export function showPass(host, r, onDone) {
     <div class="remind-info">${icon("bell")}<span>${reminderText(r)}</span></div>
     ${notifState() === "default" ? `<button class="btn btn-ghost w100 mt-s" data-notif>${icon("bell")} Activar notificaciones para mis recordatorios</button>` : ""}
     <div class="stack mt">
-      <button class="btn btn-metal w100 lg" data-save>${icon("wallet")} Guardar en wallet</button>
+      <div class="wallet-box" data-wallet><span class="spinner"></span></div>
       <div class="btn-row">
         <button class="btn btn-ghost w100" data-ics>${icon("calendar")} Agregar al calendario</button>
         ${CONFIG.whatsapp ? `<a class="btn btn-ghost w100" target="_blank" rel="noopener" href="https://wa.me/${CONFIG.whatsapp.replace(/\D/g, "")}?text=${encodeURIComponent(`Hola, hice una reserva: ${r.className} el ${fmtDate(r.date)} a las ${fmtTime(r.time)}. Código ${r.code}`)}">${icon("whatsapp")} Avisar al coach</a>` : ""}
@@ -202,7 +203,7 @@ export function showPass(host, r, onDone) {
     </div>
   </div>`;
   enhance(host);
-  $("[data-save]", host).onclick = () => downloadPass($(".pass", host), `pase-${r.code}`);
+  mountWalletButtons($("[data-wallet]", host), r, $(".pass", host));
   $("[data-ics]", host).onclick = () => icsFor(r);
   $("[data-back]", host).onclick = () => (onDone ? onDone() : (location.hash = "#/"));
   $("[data-notif]", host)?.addEventListener("click", async (e) => { const btn = e.currentTarget; if (await enableNotifications(r.memberId ? `member:${r.memberId}` : "device")) btn.remove(); });

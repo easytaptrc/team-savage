@@ -798,6 +798,7 @@ const SECTIONS = {
         </div>
         <div class="card reveal"><h3 class="h3">Servicios y cupo</h3><div data-classes></div><button type="button" class="btn btn-ghost sm" data-add-class>${icon("plus")} Agregar servicio</button></div>
         <div class="card reveal"><h3 class="h3">Planes y precios</h3><div data-plans></div><button type="button" class="btn btn-ghost sm" data-add-plan>${icon("plus")} Agregar plan</button></div>
+        <div class="card reveal wallet-cfg" data-wallet-cfg><h3 class="h3">Wallet (pases de reserva)</h3><div class="center pad"><span class="spinner"></span></div></div>
       </div>
       <div class="save-bar"><button type="button" class="btn btn-ghost" data-pw>${icon("lock")} Cambiar contraseña admin</button><button class="btn btn-metal lg">${icon("check")} Guardar cambios</button></div>
     </form>`;
@@ -821,6 +822,7 @@ const SECTIONS = {
     $("[data-cover-file]", el).onchange = async (e) => { const file = e.target.files[0]; if (!file) return; C.cover = await compressImage(file, 1600, 0.8); $("[data-cover-prev]", el).src = C.cover; };
     $("[data-cover-reset]", el).onclick = () => { C.cover = "assets/fondo.jpg"; $("[data-cover-prev]", el).src = C.cover; };
     $("[data-pw]", el).onclick = () => changePasswordDialog();
+    mountWalletConfig($("[data-wallet-cfg]", el));
     f.onsubmit = async (e) => {
       e.preventDefault(); sync();
       const hours = f.hours.value.split(/[,\s]+/).map((h) => h.trim()).filter((h) => /^\d{1,2}:\d{2}$/.test(h)).map((h) => h.padStart(5, "0")).sort();
@@ -1339,4 +1341,76 @@ async function healData(S) {
     for (const d of logins.docs) if (!S.members.has(d.id)) { await deleteDoc(d.ref); orphans++; }
     if (fixed || orphans) console.info(`Mantenimiento: ${fixed} cupo(s) corregido(s), ${orphans} acceso(s) huérfano(s) eliminados`);
   } catch (e) { console.warn("healData", e); }
+}
+
+/* ---------- Configuración de Apple Wallet / Google Wallet (se guarda en /private/wallet, solo admin) ---------- */
+async function mountWalletConfig(box) {
+  const w = (await getDoc(doc(db, "private", "wallet")).catch(() => null))?.data() || {};
+  const appleOk = !!(w.applePassTypeId && w.appleTeamId && w.appleCert && w.appleKey && w.appleWwdr);
+  const chip = (ok) => (ok ? `<span class="chip-mini ok">Activo</span>` : `<span class="chip-mini warn">Sin configurar</span>`);
+  box.innerHTML = `<h3 class="h3">Wallet (pases de reserva)</h3>
+    <p class="muted small">Para que el cliente agregue su reserva a la cartera del teléfono.</p>
+    <div class="wcfg-sec"><div class="row between"><b>Google Wallet</b>${chip(w.googleIssuerId)}</div>
+      <label class="field"><span>ID del emisor (Issuer ID)</span><input class="inp mono" data-gid value="${esc(w.googleIssuerId || "")}" placeholder="3388000000022…" inputmode="numeric"></label>
+      <details class="small muted"><summary>Cómo obtenerlo</summary><ol class="tips">
+        <li>Entra a <b>pay.google.com/business/console</b> con tu cuenta de Google y crea tu cuenta de emisor de <b>Google Wallet API</b>.</li>
+        <li>Copia el <b>Issuer ID</b> (número largo) y pégalo aquí.</li>
+        <li>En esa consola → <b>Usuarios</b> → invita a <span class="mono">624766562457-compute@developer.gserviceaccount.com</span> como <b>Desarrollador</b>.</li>
+        <li>Mientras Google revisa tu cuenta, el pase solo funciona para tus cuentas de prueba; pide «Acceso de publicación» para que funcione para todos.</li></ol></details></div>
+    <div class="wcfg-sec"><div class="row between"><b>Apple Wallet</b>${chip(appleOk)}</div>
+      <div class="grid2"><label class="field"><span>Pass Type ID</span><input class="inp mono" data-ptid value="${esc(w.applePassTypeId || "")}" placeholder="pass.com.teamsavage.reserva"></label>
+        <label class="field"><span>Team ID</span><input class="inp mono" data-team value="${esc(w.appleTeamId || "")}" placeholder="ABCDE12345"></label></div>
+      <label class="field"><span>Certificado del pase (.p12) ${w.appleCert ? "· ✓ cargado" : ""}</span><input type="file" accept=".p12,.pfx" class="inp" data-p12></label>
+      <label class="field"><span>Contraseña del .p12</span><input type="password" class="inp" data-p12pass autocomplete="off"></label>
+      <label class="field"><span>Certificado WWDR de Apple (.cer, G4) ${w.appleWwdr ? "· ✓ cargado" : ""}</span><input type="file" accept=".cer,.pem,.crt" class="inp" data-wwdr></label>
+      <details class="small muted"><summary>Cómo obtenerlos (requiere Apple Developer, $99 USD/año)</summary><ol class="tips">
+        <li>En <b>developer.apple.com</b> → Certificates, IDs &amp; Profiles → <b>Identifiers</b> → «+» → <b>Pass Type IDs</b> (ej. pass.com.teamsavage.reserva).</li>
+        <li>Abre ese Pass Type ID → <b>Create Certificate</b> → sigue los pasos y descarga el certificado.</li>
+        <li>En una Mac, ábrelo con Llavero → clic derecho → <b>Exportar</b> como <b>.p12</b> con contraseña. Sube aquí ese .p12.</li>
+        <li>Descarga <b>Apple WWDR G4</b> en apple.com/certificateauthority y súbelo aquí.</li>
+        <li>Tu <b>Team ID</b> está en developer.apple.com → Membership.</li></ol></details></div>
+    <button type="button" class="btn btn-metal w100" data-wsave>${icon("check")} Guardar Wallet</button>`;
+  const readFile = (f) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsArrayBuffer(f); });
+  const toPem = (der, label) => {
+    let bin = ""; new Uint8Array(der).forEach((b) => (bin += String.fromCharCode(b)));
+    return `-----BEGIN ${label}-----\n${btoa(bin).match(/.{1,64}/g).join("\n")}\n-----END ${label}-----\n`;
+  };
+  box.querySelector("[data-wsave]").onclick = async (e) => {
+    const btn = e.currentTarget; setBusy(btn, true, "Guardando…");
+    const data = {};
+    try {
+      data.googleIssuerId = box.querySelector("[data-gid]").value.replace(/\D/g, "");
+      data.applePassTypeId = box.querySelector("[data-ptid]").value.trim();
+      data.appleTeamId = box.querySelector("[data-team]").value.trim().toUpperCase();
+      const p12 = box.querySelector("[data-p12]").files[0];
+      if (p12) {
+        // Convierte el .p12 (certificado + llave) a PEM aquí mismo, en el navegador
+        await new Promise((ok, bad) => { if (window.forge) return ok(); const sc = document.createElement("script"); sc.src = "https://cdnjs.cloudflare.com/ajax/libs/forge/1.3.1/forge.min.js"; sc.onload = ok; sc.onerror = bad; document.head.appendChild(sc); });
+        const F = window.forge;
+        const bin = F.util.binary.raw.encode(new Uint8Array(await readFile(p12)));
+        const pkcs12 = F.pkcs12.pkcs12FromAsn1(F.asn1.fromDer(bin), box.querySelector("[data-p12pass]").value || "");
+        const cert = pkcs12.getBags({ bagType: F.pki.oids.certBag })[F.pki.oids.certBag]?.[0]?.cert;
+        const keyBag = pkcs12.getBags({ bagType: F.pki.oids.pkcs8ShroudedKeyBag })[F.pki.oids.pkcs8ShroudedKeyBag]?.[0]
+          || pkcs12.getBags({ bagType: F.pki.oids.keyBag })[F.pki.oids.keyBag]?.[0];
+        if (!cert || !keyBag?.key) throw new Error("El .p12 no trae certificado y llave");
+        data.appleCert = F.pki.certificateToPem(cert);
+        data.appleKey = F.pki.privateKeyToPem(keyBag.key);
+        data.appleKeyPass = "";
+        // El certificado trae el Pass Type ID (UID) y el Team ID (OU): se llenan solos si faltan
+        const uid = cert.subject.getField({ type: "0.9.2342.19200300.100.1.1" })?.value, ou = cert.subject.getField("OU")?.value;
+        if (uid && !data.applePassTypeId) data.applePassTypeId = uid;
+        if (ou && !data.appleTeamId) data.appleTeamId = ou;
+      }
+      const wwdr = box.querySelector("[data-wwdr]").files[0];
+      if (wwdr) {
+        const buf = await readFile(wwdr); const txt = new TextDecoder().decode(buf);
+        data.appleWwdr = txt.includes("BEGIN CERTIFICATE") ? txt : toPem(buf, "CERTIFICATE");
+      }
+      await setDoc(doc(db, "private", "wallet"), { ...data, updatedAt: serverTimestamp() }, { merge: true });
+      toast("Wallet guardado"); mountWalletConfig(box);
+    } catch (err) {
+      console.error(err); setBusy(btn, false);
+      toast(/password|MAC|Invalid/i.test(err.message || "") ? "Contraseña del .p12 incorrecta" : err.message || "No se pudo guardar", "err");
+    }
+  };
 }

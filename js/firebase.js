@@ -27,6 +27,8 @@ export const VAPID_KEY = "BHqvOw-W1mSdcFnEpmZmbBPN5aTREq6-2-bnAEb6mqxTJYeBBU1IUh
 // Dominio interno para convertir usuario/ID en correo de Firebase Auth (no se envían correos).
 export const AUTH_DOMAIN = "teamsavage.app";
 export const ADMIN_USER = "sebas";
+// Cloud Functions del proyecto (Wallet, etc.)
+export const FUNCTIONS_URL = "https://us-central1-teamsavge-2eff8.cloudfunctions.net";
 
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);

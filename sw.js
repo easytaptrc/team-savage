@@ -1,5 +1,5 @@
 // Service Worker: caché offline + notificaciones push (FCM)
-const CACHE = "ts-v7";
+const CACHE = "ts-v8";
 const ASSETS = [
   "./", "index.html", "css/styles.css", "js/app.js", "js/ui.js", "js/firebase.js", "js/metrics.js", "js/docs.js", "js/reminders.js", "js/pdfplan.js", "js/install.js",
   "js/views/home.js", "js/views/reserva.js", "js/views/pases.js", "js/views/team.js", "js/views/client.js", "js/views/admin.js",

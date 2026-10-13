@@ -10,7 +10,9 @@ import { needsConfirmation, confirmBannerHTML, bindConfirmBanners, notifState, e
 export async function render(root) {
   const L = CONFIG.links;
   const wa = CONFIG.whatsapp ? `https://wa.me/${CONFIG.whatsapp.replace(/\D/g, "")}` : "";
-  const socials = [["instagram", L.instagram], ["tiktok", L.tiktok], ["youtube", L.youtube], ["facebook", L.facebook], ["whatsapp", wa]].filter(([, u]) => u);
+  // Se ocultan las redes sin configurar (vacías o solo "tiktok.com", "youtube.com"…, sin perfil)
+  const placeholder = (u) => /^https?:\/\/(www\.)?(instagram|tiktok|youtube|facebook)\.com\/?$/i.test(u || "");
+  const socials = [["instagram", L.instagram], ["tiktok", L.tiktok], ["youtube", L.youtube], ["facebook", L.facebook], ["whatsapp", wa]].filter(([, u]) => u && !placeholder(u));
   const loc = CONFIG.location || "";
   const mapUrl = CONFIG.mapsUrl || (loc ? `https://www.google.com/maps/search/${encodeURIComponent(`${CONFIG.gymName} ${loc}`)}` : "");
   let passes = [];

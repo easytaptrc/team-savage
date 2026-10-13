@@ -66,15 +66,19 @@ export async function render(root, r) {
   let loaded = { m: false, r: false };
   const rerender = debounce(() => { if (loaded.m && loaded.r) show(S.section, S.arg, true); }, 250);
 
-  S.unsubs.push(onSnapshot(collection(db, "members"), (snap) => {
+  S.unsubs.push(onSnapshot(collection(db, "members"), { includeMetadataChanges: true }, (snap) => {
     S.members = new Map(snap.docs.map((d) => [d.id, { id: d.id, ...d.data() }]));
     loaded.m = true;
     if (!S.swept) { S.swept = true; sweep(S); }
+    if (!snap.metadata.fromCache) S.mFresh = true;
+    if (!S.healed && S.mFresh && S.rFresh) { S.healed = true; healData(S); }
     rerender();
   }, (e) => permError(e)));
-  S.unsubs.push(onSnapshot(query(collection(db, "reservations"), orderBy("createdAt", "desc"), limit(1500)), (snap) => {
+  S.unsubs.push(onSnapshot(query(collection(db, "reservations"), orderBy("createdAt", "desc"), limit(1500)), { includeMetadataChanges: true }, (snap) => {
     S.reservations = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     loaded.r = true;
+    if (!snap.metadata.fromCache) S.rFresh = true;
+    if (!S.healed && S.mFresh && S.rFresh) { S.healed = true; healData(S); }
     if (!S.releaseTimer) { S.releaseTimer = setInterval(() => releaseSweep(S), 5 * 60 * 1000); releaseSweep(S); }
     const newCount = S.reservations.filter((x) => x.status === "pendiente").length;
     badge(root, "reservas", newCount);
@@ -200,15 +204,20 @@ async function createMember(input) {
   const id = await runTransaction(db, async (tx) => {
     const cRef = doc(db, "counters", "members");
     const c = await tx.get(cRef);
-    const next = (c.exists() ? c.data().next : 1001);
-    const id = `TS${next}`;
+    let next = (c.exists() ? c.data().next : 1001);
+    // Si el ID ya está ocupado por un socio (ej. el contador se reinició), se salta al siguiente libre
+    let id = `TS${next}`;
+    for (let k = 0; k < 50 && (await tx.get(doc(db, "members", id))).exists(); k++) id = `TS${++next}`;
+    // Si ese ID se usó antes, se da una versión nueva de acceso para no chocar con la cuenta anterior
+    const prevLogin = await tx.get(doc(db, "logins", id));
+    const v = prevLogin.exists() ? (prevLogin.data().v || 1) + 1 : 1;
     tx.set(cRef, { next: next + 1 });
     tx.set(doc(db, "members", id), {
       ...data, name: data.name.trim(), phone,
       autoBlockDays: Number(data.autoBlockDays ?? CONFIG.autoBlockDefault ?? 0), status: "activo", uid: null,
       visits: 0, createdAt: serverTimestamp(), lastVisit: serverTimestamp(), paidUntil: null,
     });
-    tx.set(doc(db, "logins", id), { v: 1, claimed: false, status: "activo" });
+    tx.set(doc(db, "logins", id), { v, claimed: false, status: "activo" });
     return id;
   });
   const m = { id, name: data.name.trim(), phone };
@@ -1308,4 +1317,26 @@ async function releaseReservation(r) {
   });
   if (ok && r.memberId) notify(r.memberId, "Cita liberada", `Tu cita de ${r.className} (${fmtDate(r.date)} ${fmtTime(r.time)}) se liberó porque no confirmaste asistencia.`, "reserva");
   return ok;
+}
+
+/* ---------- Mantenimiento automático de datos (al abrir el panel) ---------- */
+// 1) Recalcula los cupos de hoy en adelante según las reservas activas (quita lugares "fantasma")
+// 2) Borra accesos (logins) de socios que ya no existen
+async function healData(S) {
+  try {
+    const today = ymd();
+    const want = {};
+    S.reservations.filter((r) => r.date >= today && ["pendiente", "confirmada"].includes(r.status))
+      .forEach((r) => { const id = slotId(r.date, r.className, r.time); want[id] = (want[id] || 0) + 1; });
+    const slots = await getDocs(query(collection(db, "slots"), where("date", ">=", today)));
+    let fixed = 0;
+    for (const d of slots.docs) {
+      const n = want[d.id] || 0;
+      if ((d.data().n ?? -1) !== n) { await (n ? updateDoc(d.ref, { n }) : deleteDoc(d.ref)); fixed++; }
+    }
+    const logins = await getDocs(collection(db, "logins"));
+    let orphans = 0;
+    for (const d of logins.docs) if (!S.members.has(d.id)) { await deleteDoc(d.ref); orphans++; }
+    if (fixed || orphans) console.info(`Mantenimiento: ${fixed} cupo(s) corregido(s), ${orphans} acceso(s) huérfano(s) eliminados`);
+  } catch (e) { console.warn("healData", e); }
 }

@@ -1355,7 +1355,7 @@ async function mountWalletConfig(box) {
       <details class="small muted"><summary>Cómo obtenerlo</summary><ol class="tips">
         <li>Entra a <b>pay.google.com/business/console</b> con tu cuenta de Google y crea tu cuenta de emisor de <b>Google Wallet API</b>.</li>
         <li>Copia el <b>Issuer ID</b> (número largo) y pégalo aquí.</li>
-        <li>En esa consola → <b>Usuarios</b> → invita a <span class="mono">624766562457-compute@developer.gserviceaccount.com</span> como <b>Desarrollador</b>.</li>
+        <li>En esa consola → <b>Usuarios</b> → invita a <span class="mono">wallet-signer@teamsavge-2eff8.iam.gserviceaccount.com</span> como <b>Desarrollador</b>.</li>
         <li>Mientras Google revisa tu cuenta, el pase solo funciona para tus cuentas de prueba; pide «Acceso de publicación» para que funcione para todos.</li></ol></details></div>
     <div class="wcfg-sec"><div class="row between"><b>Apple Wallet</b>${chip(appleOk)}</div>
       <div class="grid2"><label class="field"><span>Pass Type ID</span><input class="inp mono" data-ptid value="${esc(w.applePassTypeId || "")}" placeholder="pass.com.teamsavage.reserva"></label>
